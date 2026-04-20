@@ -31,6 +31,7 @@
 #include <RCSwitch.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include "mbedtls/md5.h"  // ESP32 SDK — IntelliSense no lo ve, pero compila correctamente
 
 // =================== CONFIG ===================
 #define RF_RX_PIN          27               // pin DATA del receptor 433MHz
@@ -44,6 +45,11 @@
 #define NTP_SERVER         "pool.ntp.org"
 #define TZ_OFFSET_SEC      -10800           // UTC-3 (Argentina)
 #define DST_OFFSET_SEC     0
+#define MAX_SESSIONS       5
+#define SESSION_TTL_MS     3600000UL        // 1 hora
+#define MAX_ADMINS         10
+#define RELAY_PIN          26               // pin del relevador (cambiar segun tu cableado)
+#define RELAY_PULSE_MS     2000             // cuanto tiempo permanece activo (ms)
 // ==============================================
 
 RCSwitch   mySwitch = RCSwitch();
@@ -60,6 +66,17 @@ bool          btnWasPressed = false;
 unsigned long lastBlinkMs = 0;
 bool          ledState = false;
 
+unsigned long lastSessionCleanMs = 0;
+unsigned long relayEndMs = 0;
+
+struct Session {
+  char token[33];
+  char username[32];
+  unsigned long createdMs;
+  bool active;
+};
+Session sessions[MAX_SESSIONS];
+
 // ---------- forward decls ----------
 String currentTimestamp();
 bool   loadUsers(JsonDocument &doc);
@@ -68,6 +85,18 @@ bool   loadLogs(JsonDocument &doc);
 bool   saveLogs(JsonDocument &doc);
 void   loadApConfig(String &ssid, String &pass);
 void   saveApConfig(const String &ssid, const String &pass);
+bool   loadAdmins(JsonDocument &doc);
+bool   saveAdmins(JsonDocument &doc);
+void   bootstrapFirstAdmin();
+String md5Hex(const String &input);
+String generateToken();
+String extractCookie(const String &cookieHeader, const String &name);
+bool   isValidSession(const String &token);
+String createSession(const String &username);
+void   invalidateSession(const String &token);
+void   cleanExpiredSessions();
+bool   requireAuth();
+String sessionUsername();
 
 // ================= STORAGE =================
 // /users.json : [{"code":123456,"name":"Papa"}]
@@ -92,6 +121,37 @@ bool saveUsers(JsonDocument &doc) {
   serializeJson(doc, f);
   f.close();
   return true;
+}
+
+bool loadAdmins(JsonDocument &doc) {
+  doc.to<JsonArray>();
+  if (!LittleFS.exists("/admins.json")) return true;
+  File f = LittleFS.open("/admins.json", "r");
+  if (!f) return false;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err) { doc.clear(); doc.to<JsonArray>(); }
+  return true;
+}
+
+bool saveAdmins(JsonDocument &doc) {
+  File f = LittleFS.open("/admins.json", "w");
+  if (!f) return false;
+  serializeJson(doc, f);
+  f.close();
+  return true;
+}
+
+void bootstrapFirstAdmin() {
+  if (LittleFS.exists("/admins.json")) return;
+  JsonDocument doc;
+  doc.to<JsonArray>();
+  JsonObject a = doc.as<JsonArray>().add<JsonObject>();
+  a["username"] = "admin";
+  a["hash"]     = md5Hex("admin1234");
+  saveAdmins(doc);
+  Serial.println("[AUTH] primer admin creado: admin / admin1234");
+  Serial.println("[AUTH] *** CAMBIA EL PASSWORD DESDE LA PESTANA ADMINS ***");
 }
 
 bool loadLogs(JsonDocument &doc) {
@@ -121,13 +181,14 @@ String findUserName(unsigned long code) {
   return "";
 }
 
-void addLog(const String &name, unsigned long code) {
+void addLog(const String &name, unsigned long code, bool blocked = false) {
   JsonDocument doc; loadLogs(doc);
   JsonArray arr = doc.as<JsonArray>();
   JsonObject entry = arr.add<JsonObject>();
-  entry["ts"]   = currentTimestamp();
-  entry["name"] = name;
-  entry["code"] = code;
+  entry["ts"]      = currentTimestamp();
+  entry["name"]    = name;
+  entry["code"]    = code;
+  if (blocked) entry["blocked"] = true;
   while (arr.size() > MAX_LOGS) arr.remove(0);
   saveLogs(doc);
 }
@@ -142,6 +203,99 @@ String currentTimestamp() {
   struct tm tm; localtime_r(&now, &tm);
   char buf[32]; strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
   return String(buf);
+}
+
+// ================= AUTH =================
+String md5Hex(const String &input) {
+  mbedtls_md5_context ctx;
+  mbedtls_md5_init(&ctx);
+  mbedtls_md5_starts(&ctx);
+  mbedtls_md5_update(&ctx, (const uint8_t*)input.c_str(), input.length());
+  uint8_t digest[16];
+  mbedtls_md5_finish(&ctx, digest);
+  mbedtls_md5_free(&ctx);
+  char hex[33];
+  for (int i = 0; i < 16; i++) sprintf(hex + i * 2, "%02x", digest[i]);
+  hex[32] = '\0';
+  return String(hex);
+}
+
+String generateToken() {
+  char token[33];
+  for (int i = 0; i < 4; i++) sprintf(token + i * 8, "%08x", esp_random());
+  token[32] = '\0';
+  return String(token);
+}
+
+String extractCookie(const String &cookieHeader, const String &name) {
+  String search = name + "=";
+  int idx = cookieHeader.indexOf(search);
+  if (idx < 0) return "";
+  int start = idx + search.length();
+  int end = cookieHeader.indexOf(';', start);
+  return end < 0 ? cookieHeader.substring(start) : cookieHeader.substring(start, end);
+}
+
+bool isValidSession(const String &token) {
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].active &&
+        token == sessions[i].token &&
+        (now - sessions[i].createdMs) < SESSION_TTL_MS) return true;
+  }
+  return false;
+}
+
+String createSession(const String &username) {
+  cleanExpiredSessions();
+  int slot = -1;
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (!sessions[i].active) { slot = i; break; }
+  }
+  if (slot < 0) {
+    // evict oldest
+    unsigned long oldest = millis();
+    slot = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+      if (sessions[i].createdMs <= oldest) { oldest = sessions[i].createdMs; slot = i; }
+    }
+  }
+  String token = generateToken();
+  strncpy(sessions[slot].token, token.c_str(), 32); sessions[slot].token[32] = '\0';
+  strncpy(sessions[slot].username, username.c_str(), 31); sessions[slot].username[31] = '\0';
+  sessions[slot].createdMs = millis();
+  sessions[slot].active = true;
+  return token;
+}
+
+void invalidateSession(const String &token) {
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].active && token == sessions[i].token) { sessions[i].active = false; break; }
+  }
+}
+
+void cleanExpiredSessions() {
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].active && (now - sessions[i].createdMs) > SESSION_TTL_MS)
+      sessions[i].active = false;
+  }
+}
+
+bool requireAuth() {
+  String token = extractCookie(server.header("Cookie"), "session");
+  if (token.length() > 0 && isValidSession(token)) return true;
+  server.sendHeader("Location", "/login");
+  server.send(302, "text/plain", "");
+  return false;
+}
+
+String sessionUsername() {
+  String token = extractCookie(server.header("Cookie"), "session");
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].active && token == sessions[i].token) return String(sessions[i].username);
+  }
+  return "";
 }
 
 // ================= AP CONFIG =================
@@ -268,17 +422,54 @@ void checkResetButton() {
 }
 
 // ================= HTML =================
+const char LOGIN_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login - Porton</title>
+<style>
+:root{--bg:#0f1115;--card:#1a1d24;--txt:#e6e6e6;--acc:#4ade80;--err:#f87171}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{background:var(--card);border-radius:12px;padding:28px 24px;width:100%;max-width:340px}
+h1{font-size:20px;margin:0 0 6px;text-align:center}
+.sub{color:#888;font-size:13px;text-align:center;margin-bottom:20px}
+input{display:block;width:100%;background:#262a33;border:1px solid #3a3e48;color:var(--txt);padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;margin-bottom:10px}
+input:focus{outline:none;border-color:var(--acc)}
+button{width:100%;background:var(--acc);color:#051a0d;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:4px}
+.err{color:var(--err);font-size:13px;text-align:center;margin-top:12px;display:none}
+</style></head><body>
+<div class="card">
+  <h1>&#128682; Porton</h1>
+  <div class="sub">Ingresa tus credenciales</div>
+  <input type="text" id="u" placeholder="Usuario" autocomplete="username">
+  <input type="password" id="p" placeholder="Contrasena" autocomplete="current-password">
+  <button onclick="doLogin()">Ingresar</button>
+  <div class="err" id="err">Usuario o contrasena incorrectos</div>
+</div>
+<script>
+async function doLogin(){
+  const u=document.getElementById('u').value.trim();
+  const p=document.getElementById('p').value;
+  if(!u||!p)return;
+  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'username='+encodeURIComponent(u)+'&password='+encodeURIComponent(p)});
+  if(r.ok)window.location='/';
+  else document.getElementById('err').style.display='block';
+}
+document.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+</script></body></html>
+)rawliteral";
+
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="es"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Porton</title>
 <style>
 :root{--bg:#0f1115;--card:#1a1d24;--txt:#e6e6e6;--mut:#888;--acc:#4ade80;--warn:#fbbf24;--err:#f87171}
 *{box-sizing:border-box}
 body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);margin:0;padding:16px;max-width:680px;margin:0 auto}
-h1{font-size:22px;margin:0 0 4px}
+h1{font-size:22px;margin:0}
 h2{font-size:13px;margin:20px 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
 .sub{color:var(--mut);font-size:13px;margin-bottom:16px}
 .card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px}
@@ -290,21 +481,25 @@ button,input{background:#262a33;border:1px solid #3a3e48;color:var(--txt);paddin
 button{cursor:pointer;background:var(--acc);color:#051a0d;border:none;font-weight:600}
 button.sec{background:#262a33;color:var(--txt)}
 button.warn{background:var(--err);color:#fff}
+button.blk{background:var(--warn);color:#1a1200}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .empty{color:var(--mut);text-align:center;padding:24px 0}
 .tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;background:#262a33;color:var(--mut)}
+.tag.red{background:var(--err);color:#fff}
 .learning{background:var(--warn);color:#1a1200;padding:12px;border-radius:8px;text-align:center;margin-bottom:10px;font-weight:600}
 .nav{display:flex;gap:6px;margin-bottom:16px}
 .nav a{flex:1;text-align:center;padding:10px;text-decoration:none;color:var(--txt);background:var(--card);border-radius:8px;font-size:13px}
 .nav a.active{background:var(--acc);color:#051a0d;font-weight:600}
 .hint{font-size:11px;color:var(--mut);margin-top:6px;line-height:1.4}
+.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 </style></head><body>
-<h1>&#128682; Porton</h1>
+<div class="hdr"><h1>&#128682; Porton</h1><a href="/logout" style="text-decoration:none"><button class="sec" style="width:auto;padding:6px 14px;font-size:12px">Salir</button></a></div>
 <div class="sub" id="status">cargando...</div>
 <div class="nav">
   <a href="#" class="active" data-tab="logs">Registros</a>
   <a href="#" data-tab="users">Controles</a>
   <a href="#" data-tab="net">Red</a>
+  <a href="#" data-tab="admins">Admins</a>
 </div>
 
 <div id="tab-logs">
@@ -339,9 +534,8 @@ button.warn{background:var(--err);color:#fff}
     <input type="text" id="apSsid" placeholder="SSID (ej. Porton_Config)" maxlength="32">
     <input type="password" id="apPass" placeholder="Password (min. 8 caracteres)" style="margin-top:8px" maxlength="63">
     <button style="margin-top:10px" onclick="saveAp()">Guardar y reiniciar</button>
-    <div class="hint">Si olvidas el password: manten apretado el boton BOOT del Porton Admin por 5 segundos. El LED azul parpadea y vuelve a Porton_Config / porton1234.</div>
+    <div class="hint">Si olvidas el password: manten apretado el boton BOOT 5 segundos. Vuelve a Porton_Config / porton1234.</div>
   </div>
-
   <h2>Conexion a WiFi de casa</h2>
   <div class="card">
     <div style="margin-bottom:8px">Estado: <span id="wifiStatus" class="tag">-</span></div>
@@ -352,36 +546,56 @@ button.warn{background:var(--err);color:#fff}
   </div>
 </div>
 
+<div id="tab-admins" style="display:none">
+  <h2>Usuarios admin</h2>
+  <div class="card" id="admins"></div>
+  <h2>Agregar admin</h2>
+  <div class="card">
+    <input type="text" id="newAdminUser" placeholder="Nombre de usuario" maxlength="31">
+    <input type="password" id="newAdminPass" placeholder="Contrasena (min. 6 caracteres)" style="margin-top:8px" maxlength="63">
+    <button style="margin-top:10px" onclick="addAdmin()">Agregar</button>
+    <div class="hint">No se puede borrar el ultimo admin.</div>
+  </div>
+  <h2>Cambiar mi password</h2>
+  <div class="card">
+    <input type="password" id="cpOld" placeholder="Password actual" maxlength="63">
+    <input type="password" id="cpNew" placeholder="Nuevo password (min. 6 caracteres)" style="margin-top:8px" maxlength="63">
+    <input type="password" id="cpNew2" placeholder="Repetir nuevo password" style="margin-top:8px" maxlength="63">
+    <button style="margin-top:10px" onclick="changePass()">Cambiar password</button>
+  </div>
+</div>
+
 <script>
+function chk(r){if(r&&r.status===401){window.location='/login';return false;}return true;}
 function tab(id){
   document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===id));
-  ['logs','users','net'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
-  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net')loadStatus();
+  ['logs','users','net','admins'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
+  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net')loadStatus();if(id==='admins')loadAdmins();
 }
 document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();tab(a.dataset.tab);}));
-
 async function loadStatus(){
-  const r=await fetch('/api/status');const j=await r.json();
+  const r=await fetch('/api/status');if(!chk(r))return;const j=await r.json();
   document.getElementById('status').textContent=j.time+' - '+(j.staIp||'sin WiFi casa')+' - AP: '+j.apIp;
   document.getElementById('wifiStatus').textContent=j.staIp?('Conectado a '+j.ssid+' ('+j.staIp+')'):'No conectado';
   document.getElementById('apInfo').textContent=j.apSsid+(j.apOpen?' (abierta)':' (protegida)');
   document.getElementById('apSsid').value=j.apSsid;
 }
 async function loadLogs(){
-  const r=await fetch('/api/logs');const j=await r.json();
+  const r=await fetch('/api/logs');if(!chk(r))return;const j=await r.json();
   const el=document.getElementById('logs');
   if(!j.length){el.innerHTML='<div class="empty">Sin registros todavia</div>';return;}
-  el.innerHTML=j.slice().reverse().map(e=>`<div class="row"><div><div class="name">${e.name||'Desconocido'}</div><div class="meta">codigo ${e.code}</div></div><div class="meta">${e.ts}</div></div>`).join('');
+  el.innerHTML=j.slice().reverse().map(e=>`<div class="row"><div><div class="name">${e.name||'Desconocido'}${e.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${e.code}</div></div><div class="meta">${e.ts}</div></div>`).join('');
 }
 async function loadUsers(){
-  const r=await fetch('/api/users');const j=await r.json();
+  const r=await fetch('/api/users');if(!chk(r))return;const j=await r.json();
   const el=document.getElementById('users');
   if(!j.users.length)el.innerHTML='<div class="empty">Todavia no hay controles aprendidos</div>';
-  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}</div><div class="meta">codigo ${u.code}</div></div><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div>`).join('');
+  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}</div></div><div style="display:flex;gap:6px"><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
   const lb=document.getElementById('learnBox');
   lb.innerHTML=j.learning?`<div class="learning">Esperando boton del control para "${j.learning}"...</div>`:'';
   if(j.learning)setTimeout(loadUsers,1500);
 }
+async function toggleUser(code){await fetch('/api/users/toggle?code='+code);loadUsers();}
 async function startLearn(){
   const name=document.getElementById('newName').value.trim();
   if(!name){alert('Ingresa un nombre');return;}
@@ -402,20 +616,57 @@ async function saveAp(){
   const ssid=document.getElementById('apSsid').value.trim();
   const pass=document.getElementById('apPass').value;
   if(!ssid){alert('Ingresa el SSID del AP');return;}
-  if(pass.length>0 && pass.length<8){alert('El password debe tener al menos 8 caracteres (o dejarlo vacio para red abierta)');return;}
-  if(!confirm('El Porton Admin se va a reiniciar. Te vas a tener que reconectar con el nuevo password. Continuar?'))return;
+  if(pass.length>0&&pass.length<8){alert('El password debe tener al menos 8 caracteres (o dejarlo vacio para red abierta)');return;}
+  if(!confirm('El Porton Admin se va a reiniciar. Continuar?'))return;
   const r=await fetch('/api/ap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,pass})});
-  if(r.ok)alert('Guardado. Reiniciando...');
-  else alert('Error al guardar');
+  if(r.ok)alert('Guardado. Reiniciando...');else alert('Error al guardar');
+}
+async function loadAdmins(){
+  const r=await fetch('/api/admin/users');if(!chk(r))return;const j=await r.json();
+  const el=document.getElementById('admins');
+  if(!j.length){el.innerHTML='<div class="empty">No hay admins</div>';return;}
+  el.innerHTML=j.map(a=>`<div class="row"><div class="name">${a.username}</div><button class="warn" style="width:auto;padding:6px 10px" onclick="delAdmin('${a.username}')">Borrar</button></div>`).join('');
+}
+async function addAdmin(){
+  const u=document.getElementById('newAdminUser').value.trim();
+  const p=document.getElementById('newAdminPass').value;
+  if(!u||!p){alert('Completa usuario y contrasena');return;}
+  if(p.length<6){alert('El password debe tener al menos 6 caracteres');return;}
+  const r=await fetch('/api/admin/users/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const j=await r.json();
+  if(r.ok){document.getElementById('newAdminUser').value='';document.getElementById('newAdminPass').value='';loadAdmins();}
+  else alert(j.error||'Error');
+}
+async function changePass(){
+  const o=document.getElementById('cpOld').value;
+  const n=document.getElementById('cpNew').value;
+  const n2=document.getElementById('cpNew2').value;
+  if(!o||!n||!n2){alert('Completa todos los campos');return;}
+  if(n.length<6){alert('El nuevo password debe tener al menos 6 caracteres');return;}
+  if(n!==n2){alert('Los passwords nuevos no coinciden');return;}
+  const r=await fetch('/api/admin/changepass',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPassword:o,newPassword:n})});
+  const j=await r.json();
+  if(r.ok){alert('Password cambiado correctamente');document.getElementById('cpOld').value='';document.getElementById('cpNew').value='';document.getElementById('cpNew2').value='';}
+  else alert(j.error||'Error');
+}
+async function delAdmin(u){
+  if(!confirm('Borrar admin '+u+'?'))return;
+  const r=await fetch('/api/admin/users/delete?username='+encodeURIComponent(u));
+  const j=await r.json();
+  if(r.ok)loadAdmins();else alert(j.error||'Error');
 }
 loadStatus();loadLogs();setInterval(loadLogs,5000);
 </script></body></html>
 )rawliteral";
 
 // ================= HANDLERS =================
-void handleRoot() { server.send_P(200, "text/html", INDEX_HTML); }
+void handleRoot() {
+  if (!requireAuth()) return;
+  server.send_P(200, "text/html", INDEX_HTML);
+}
 
 void handleStatus() {
+  if (!requireAuth()) return;
   String apSsid, apPass; loadApConfig(apSsid, apPass);
   JsonDocument doc;
   doc["time"]    = currentTimestamp();
@@ -434,6 +685,7 @@ void handleStatus() {
 }
 
 void handleLogs() {
+  if (!requireAuth()) return;
   if (!LittleFS.exists("/logs.json")) { server.send(200, "application/json", "[]"); return; }
   File f = LittleFS.open("/logs.json", "r");
   server.streamFile(f, "application/json");
@@ -441,6 +693,7 @@ void handleLogs() {
 }
 
 void handleLogsCsv() {
+  if (!requireAuth()) return;
   JsonDocument doc; loadLogs(doc);
   String out = "fecha,nombre,codigo\n";
   for (JsonObject e : doc.as<JsonArray>()) {
@@ -453,11 +706,13 @@ void handleLogsCsv() {
 }
 
 void handleLogsClear() {
+  if (!requireAuth()) return;
   LittleFS.remove("/logs.json");
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleUsers() {
+  if (!requireAuth()) return;
   JsonDocument users; loadUsers(users);
   JsonDocument out;
   out["users"]    = users.as<JsonArray>();
@@ -467,6 +722,7 @@ void handleUsers() {
 }
 
 void handleLearnStart() {
+  if (!requireAuth()) return;
   if (!server.hasArg("name")) { server.send(400, "text/plain", "name requerido"); return; }
   learnName = server.arg("name");
   Serial.printf("[LEARN] esperando codigo para: %s\n", learnName.c_str());
@@ -474,11 +730,13 @@ void handleLearnStart() {
 }
 
 void handleLearnCancel() {
+  if (!requireAuth()) return;
   learnName = "";
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleUserDelete() {
+  if (!requireAuth()) return;
   if (!server.hasArg("code")) { server.send(400, "text/plain", "code requerido"); return; }
   unsigned long code = strtoul(server.arg("code").c_str(), nullptr, 10);
   JsonDocument doc; loadUsers(doc);
@@ -491,6 +749,7 @@ void handleUserDelete() {
 }
 
 void handleWifiSet() {
+  if (!requireAuth()) return;
   if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
   JsonDocument doc; deserializeJson(doc, server.arg("plain"));
   saveWiFiConfig(doc["ssid"].as<String>(), doc["pass"].as<String>());
@@ -499,6 +758,7 @@ void handleWifiSet() {
 }
 
 void handleApSet() {
+  if (!requireAuth()) return;
   if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
   JsonDocument doc; deserializeJson(doc, server.arg("plain"));
   String ssid = doc["ssid"].as<String>();
@@ -513,18 +773,161 @@ void handleApSet() {
   delay(500); ESP.restart();
 }
 
+void handleUserToggle() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("code")) { server.send(400, "text/plain", "code requerido"); return; }
+  unsigned long code = strtoul(server.arg("code").c_str(), nullptr, 10);
+  JsonDocument doc; loadUsers(doc);
+  for (JsonObject u : doc.as<JsonArray>()) {
+    if (u["code"].as<unsigned long>() == code) {
+      u["blocked"] = !(u["blocked"] | false);
+      break;
+    }
+  }
+  saveUsers(doc);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleLoginGet() {
+  String token = extractCookie(server.header("Cookie"), "session");
+  if (token.length() > 0 && isValidSession(token)) {
+    server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); return;
+  }
+  server.send_P(200, "text/html", LOGIN_HTML);
+}
+
+void handleLoginPost() {
+  String username = server.arg("username");
+  String password = server.arg("password");
+  if (username.length() == 0 || password.length() == 0) {
+    server.send(400, "text/plain", "Datos incompletos"); return;
+  }
+  String hash = md5Hex(password);
+  JsonDocument doc; loadAdmins(doc);
+  for (JsonObject a : doc.as<JsonArray>()) {
+    if (a["username"].as<String>() == username && a["hash"].as<String>() == hash) {
+      String token = createSession(username);
+      server.sendHeader("Set-Cookie", "session=" + token + "; Path=/; HttpOnly");
+      server.send(200, "text/plain", "OK");
+      Serial.printf("[AUTH] login: %s\n", username.c_str());
+      return;
+    }
+  }
+  server.send(401, "text/plain", "Credenciales incorrectas");
+}
+
+void handleLogout() {
+  String token = extractCookie(server.header("Cookie"), "session");
+  if (token.length() > 0) invalidateSession(token);
+  server.sendHeader("Set-Cookie", "session=; Path=/; Max-Age=0; HttpOnly");
+  server.sendHeader("Location", "/login");
+  server.send(302, "text/plain", "");
+}
+
+void handleAdminUsers() {
+  if (!requireAuth()) return;
+  JsonDocument doc; loadAdmins(doc);
+  JsonDocument out;
+  JsonArray arr = out.to<JsonArray>();
+  for (JsonObject a : doc.as<JsonArray>()) {
+    JsonObject item = arr.add<JsonObject>();
+    item["username"] = a["username"].as<String>();
+  }
+  String s; serializeJson(out, s);
+  server.send(200, "application/json", s);
+}
+
+void handleAdminAdd() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"body requerido\"}"); return; }
+  JsonDocument req; deserializeJson(req, server.arg("plain"));
+  String username = req["username"].as<String>();
+  String password = req["password"].as<String>();
+  if (username.length() == 0 || password.length() < 6) {
+    server.send(400, "application/json", "{\"error\":\"usuario invalido o password muy corto\"}"); return;
+  }
+  JsonDocument doc; loadAdmins(doc);
+  JsonArray arr = doc.as<JsonArray>();
+  if ((int)arr.size() >= MAX_ADMINS) {
+    server.send(400, "application/json", "{\"error\":\"limite de admins alcanzado\"}"); return;
+  }
+  for (JsonObject a : arr) {
+    if (a["username"].as<String>() == username) {
+      server.send(400, "application/json", "{\"error\":\"usuario ya existe\"}"); return;
+    }
+  }
+  JsonObject nu = arr.add<JsonObject>();
+  nu["username"] = username;
+  nu["hash"]     = md5Hex(password);
+  saveAdmins(doc);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleAdminChangePass() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"body requerido\"}"); return; }
+  JsonDocument req; deserializeJson(req, server.arg("plain"));
+  String oldPass = req["oldPassword"].as<String>();
+  String newPass = req["newPassword"].as<String>();
+  if (newPass.length() < 6) {
+    server.send(400, "application/json", "{\"error\":\"el nuevo password debe tener al menos 6 caracteres\"}"); return;
+  }
+  String username = sessionUsername();
+  JsonDocument doc; loadAdmins(doc);
+  for (JsonObject a : doc.as<JsonArray>()) {
+    if (a["username"].as<String>() == username) {
+      if (a["hash"].as<String>() != md5Hex(oldPass)) {
+        server.send(401, "application/json", "{\"error\":\"password actual incorrecto\"}"); return;
+      }
+      a["hash"] = md5Hex(newPass);
+      saveAdmins(doc);
+      server.send(200, "application/json", "{\"ok\":true}");
+      Serial.printf("[AUTH] password cambiado: %s\n", username.c_str());
+      return;
+    }
+  }
+  server.send(404, "application/json", "{\"error\":\"usuario no encontrado\"}");
+}
+
+void handleAdminDelete() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("username")) { server.send(400, "application/json", "{\"error\":\"username requerido\"}"); return; }
+  String username = server.arg("username");
+  JsonDocument doc; loadAdmins(doc);
+  JsonArray arr = doc.as<JsonArray>();
+  if ((int)arr.size() <= 1) {
+    server.send(400, "application/json", "{\"error\":\"no se puede borrar el ultimo admin\"}"); return;
+  }
+  for (int i = arr.size() - 1; i >= 0; i--) {
+    if (arr[i]["username"].as<String>() == username) arr.remove(i);
+  }
+  saveAdmins(doc);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 void setupWebServer() {
-  server.on("/",                  handleRoot);
-  server.on("/api/status",        handleStatus);
-  server.on("/api/logs",          handleLogs);
-  server.on("/api/logs/clear",    handleLogsClear);
-  server.on("/logs.csv",          handleLogsCsv);
-  server.on("/api/users",         handleUsers);
-  server.on("/api/users/delete",  handleUserDelete);
-  server.on("/api/learn/start",   handleLearnStart);
-  server.on("/api/learn/cancel",  handleLearnCancel);
-  server.on("/api/wifi",          HTTP_POST, handleWifiSet);
-  server.on("/api/ap",            HTTP_POST, handleApSet);
+  const char* hdrs[] = {"Cookie"};
+  server.collectHeaders(hdrs, 1);
+
+  server.on("/",                       handleRoot);
+  server.on("/login",      HTTP_GET,   handleLoginGet);
+  server.on("/login",      HTTP_POST,  handleLoginPost);
+  server.on("/logout",                 handleLogout);
+  server.on("/api/status",             handleStatus);
+  server.on("/api/logs",               handleLogs);
+  server.on("/api/logs/clear",         handleLogsClear);
+  server.on("/logs.csv",               handleLogsCsv);
+  server.on("/api/users",              handleUsers);
+  server.on("/api/users/delete",       handleUserDelete);
+  server.on("/api/users/toggle",       handleUserToggle);
+  server.on("/api/learn/start",        handleLearnStart);
+  server.on("/api/learn/cancel",       handleLearnCancel);
+  server.on("/api/wifi",   HTTP_POST,  handleWifiSet);
+  server.on("/api/ap",     HTTP_POST,  handleApSet);
+  server.on("/api/admin/users",                      handleAdminUsers);
+  server.on("/api/admin/users/add",       HTTP_POST, handleAdminAdd);
+  server.on("/api/admin/users/delete",               handleAdminDelete);
+  server.on("/api/admin/changepass",      HTTP_POST, handleAdminChangePass);
   server.begin();
   Serial.println("[WEB] servidor iniciado");
 }
@@ -541,6 +944,11 @@ void setup() {
 
   if (!LittleFS.begin(true)) Serial.println("[FS] error montando LittleFS");
 
+  bootstrapFirstAdmin();
+
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
+
   setupWiFi();
   setupWebServer();
 
@@ -552,6 +960,18 @@ void setup() {
 void loop() {
   server.handleClient();
   checkResetButton();
+
+  // relay no-bloqueante: apagar cuando vence el tiempo
+  if (relayEndMs > 0 && millis() >= relayEndMs) {
+    digitalWrite(RELAY_PIN, LOW);
+    relayEndMs = 0;
+  }
+
+  // limpiar sesiones vencidas cada 60 segundos
+  if (millis() - lastSessionCleanMs >= 60000UL) {
+    lastSessionCleanMs = millis();
+    cleanExpiredSessions();
+  }
 
   if (mySwitch.available()) {
     unsigned long code = mySwitch.getReceivedValue();
@@ -573,7 +993,7 @@ void loop() {
       }
       if (!existed) {
         JsonObject nu = arr.add<JsonObject>();
-        nu["code"] = code; nu["name"] = learnName;
+        nu["code"] = code; nu["name"] = learnName; nu["blocked"] = false;
       }
       saveUsers(doc);
       Serial.printf("[LEARN] %s -> %lu\n", learnName.c_str(), code);
@@ -581,9 +1001,30 @@ void loop() {
       return;
     }
 
-    String name = findUserName(code);
-    if (name.length() == 0) name = "Desconocido";
-    addLog(name, code);
-    Serial.printf("[LOG] %s (codigo %lu)\n", name.c_str(), code);
+    // buscar usuario y verificar si esta bloqueado
+    String name = "";
+    bool blocked = false;
+    bool known = false;
+    JsonDocument usersDoc; loadUsers(usersDoc);
+    for (JsonObject u : usersDoc.as<JsonArray>()) {
+      if (u["code"].as<unsigned long>() == code) {
+        name    = u["name"].as<String>();
+        blocked = u["blocked"] | false;
+        known   = true;
+        break;
+      }
+    }
+    if (!known) name = "Desconocido";
+
+    if (known && !blocked) {
+      digitalWrite(RELAY_PIN, HIGH);
+      relayEndMs = millis() + RELAY_PULSE_MS;
+      Serial.printf("[RELAY] activado para %s\n", name.c_str());
+    } else if (blocked) {
+      Serial.printf("[BLOQUEADO] %s (codigo %lu)\n", name.c_str(), code);
+    }
+
+    addLog(name, code, blocked && known);
+    Serial.printf("[LOG] %s (codigo %lu)%s\n", name.c_str(), code, blocked ? " [BLOQUEADO]" : "");
   }
 }
