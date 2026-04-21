@@ -58,6 +58,12 @@ El módulo tiene 4 pines (de izquierda a derecha mirando la cara con componentes
 
 > **Antena:** para mayor alcance soldá un hilo rígido de **17.3 cm** al pin ANT (λ/4 a 433MHz).
 
+### Diagrama de conexiones
+
+![Diagrama de conexiones](diagrama_conexiones.svg)
+
+> Si el diagrama no se ve, abrí [diagrama_conexiones.html](diagrama_conexiones.html) directamente en el navegador.
+
 ### Conexiones completas ESP32
 
 | Señal | GPIO ESP32 |
