@@ -154,7 +154,7 @@ Historial de todos los accesos con fecha/hora, nombre y código del control.
 Lista todos los controles remotos registrados y permite gestionarlos.
 
 **Aprender un control nuevo:**
-1. Escribí un nombre (ej. `Papa`, `Vecino`).
+1. Escribí un nombre (ej. `Usuario`, `Vecino`).
 2. Presioná **Iniciar aprendizaje**.
 3. Apretá una vez el botón del control remoto.
 4. El código se guarda automáticamente.
@@ -186,7 +186,7 @@ Configuración opcional para recibir mensajes en un grupo o chat de Telegram.
 
 | Evento | Mensaje que llega |
 |---|---|
-| Acceso autorizado | `Acceso: Papa - 2026-04-21 10:30:00` |
+| Acceso autorizado | `Acceso: Usuario - 2026-04-21 10:30:00` |
 | Control bloqueado | `BLOQUEADO: Vecino - 2026-04-21 10:31:00` |
 | Código desconocido | `Desconocido: codigo 123456 - 2026-04-21 10:32:00` |
 
