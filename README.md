@@ -194,6 +194,11 @@ Configuración opcional para recibir mensajes en un grupo o chat de Telegram.
 
 ### Pestaña — Red
 
+**Zona horaria:**
+Selector de zona horaria con predeterminado México Centro (UTC-6). Se aplica al instante sin reiniciar. Opciones disponibles: México (tres zonas), países de América Latina, España y UTC.
+
+> La zona se guarda en `/tz.json`. NTP obtiene la hora en UTC y el ESP32 la convierte localmente usando la zona configurada.
+
 **AP del portón:**
 Cambia el SSID y contraseña de la red WiFi propia del dispositivo.
 - Password mínimo 8 caracteres. Dejarlo vacío para red abierta.
@@ -254,6 +259,7 @@ Si olvidás el password del AP y no podés conectarte al panel:
 | `/admins.json` | Usuarios admin con password hasheado |
 | `/wifi.json` | Credenciales del WiFi de casa |
 | `/ap.json` | Configuración del AP propio |
+| `/tz.json` | Zona horaria (cadena POSIX, ej. `<-06>6`) |
 
 ---
 

@@ -44,8 +44,7 @@
 #define COOLDOWN_MS        3000
 #define MAX_LOGS           500
 #define NTP_SERVER         "pool.ntp.org"
-#define TZ_OFFSET_SEC      -10800           // UTC-3 (Argentina)
-#define DST_OFFSET_SEC     0
+// TZ se gestiona dinamicamente via /tz.json — ver applyTimezone()
 #define MAX_SESSIONS       5
 #define SESSION_TTL_MS     3600000UL        // 1 hora
 #define MAX_ADMINS         10
@@ -101,6 +100,9 @@ String sessionUsername();
 bool   loadTelegramConfig(JsonDocument &doc);
 bool   saveTelegramConfig(JsonDocument &doc);
 void   sendTelegram(const String &eventType, const String &message);
+bool   loadTzConfig(String &posix);
+void   saveTzConfig(const String &posix);
+void   applyTimezone();
 
 // ================= STORAGE =================
 // /users.json : [{"code":123456,"name":"Papa"}]
@@ -262,6 +264,38 @@ void sendTelegram(const String &eventType, const String &message) {
   while (client.available() == 0 && millis() - t < 4000) delay(10);
   client.stop();
   Serial.println("[TG] mensaje enviado: " + message);
+}
+
+// ================= TIMEZONE =================
+bool loadTzConfig(String &posix) {
+  posix = "<-06>6";  // default: Mexico Centro UTC-6
+  if (!LittleFS.exists("/tz.json")) return true;
+  File f = LittleFS.open("/tz.json", "r");
+  if (!f) return true;
+  JsonDocument doc;
+  if (deserializeJson(doc, f) == DeserializationError::Ok) {
+    String p = doc["posix"].as<String>();
+    if (p.length() > 0) posix = p;
+  }
+  f.close();
+  return true;
+}
+
+void saveTzConfig(const String &posix) {
+  JsonDocument doc;
+  doc["posix"] = posix;
+  File f = LittleFS.open("/tz.json", "w");
+  if (!f) return;
+  serializeJson(doc, f);
+  f.close();
+}
+
+void applyTimezone() {
+  String posix;
+  loadTzConfig(posix);
+  setenv("TZ", posix.c_str(), 1);
+  tzset();
+  Serial.printf("[TZ] zona aplicada: %s\n", posix.c_str());
 }
 
 // ================= AUTH =================
@@ -432,7 +466,7 @@ void setupWiFi() {
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("[STA] OK  IP=%s\n", WiFi.localIP().toString().c_str());
-      configTime(TZ_OFFSET_SEC, DST_OFFSET_SEC, NTP_SERVER);
+      configTime(0, 0, NTP_SERVER);
       struct tm tm;
       if (getLocalTime(&tm, 5000)) { timeOk = true; Serial.println("[NTP] hora sincronizada"); }
     } else {
@@ -536,7 +570,7 @@ h2{font-size:13px;margin:20px 0 8px;color:var(--mut);text-transform:uppercase;le
 .row:last-child{border-bottom:none}
 .row .name{font-weight:600}
 .row .meta{color:var(--mut);font-size:12px}
-button,input{background:#262a33;border:1px solid #3a3e48;color:var(--txt);padding:10px 12px;border-radius:8px;font-size:14px;width:100%;font-family:inherit}
+button,input,select{background:#262a33;border:1px solid #3a3e48;color:var(--txt);padding:10px 12px;border-radius:8px;font-size:14px;width:100%;font-family:inherit}
 button{cursor:pointer;background:var(--acc);color:#051a0d;border:none;font-weight:600}
 button.sec{background:#262a33;color:var(--txt)}
 button.warn{background:var(--err);color:#fff}
@@ -618,6 +652,27 @@ button.blk{background:var(--warn);color:#1a1200}
     <button style="margin-top:10px" onclick="saveTelegram()">Guardar</button>
     <div class="hint">Requiere WiFi de casa activo. Obtene el token con @BotFather en Telegram y el Chat ID con @userinfobot.</div>
   </div>
+  <h2>Zona horaria</h2>
+  <div class="card">
+    <select id="tzPosix" style="margin-bottom:10px">
+      <option value="&lt;-06&gt;6">Mexico Centro (UTC-6)</option>
+      <option value="&lt;-07&gt;7">Mexico Sonora (UTC-7)</option>
+      <option value="&lt;-08&gt;8&lt;-07&gt;,M3.2.0,M11.1.0">Mexico Noroeste/Tijuana (UTC-8/-7)</option>
+      <option value="&lt;-05&gt;5">Colombia / Ecuador / Peru (UTC-5)</option>
+      <option value="&lt;-04&gt;4">Venezuela / Bolivia (UTC-4)</option>
+      <option value="&lt;-03&gt;3">Argentina / Uruguay (UTC-3)</option>
+      <option value="&lt;-04&gt;4&lt;-03&gt;,M9.1.6/24,M4.1.6/24">Chile (UTC-4/-3)</option>
+      <option value="&lt;-04&gt;4&lt;-03&gt;,M9.1.0/0,M3.4.0/0">Paraguay (UTC-4/-3)</option>
+      <option value="CET-1CEST,M3.5.0,M10.5.0/3">Espana (UTC+1/+2)</option>
+      <option value="UTC0">UTC</option>
+      <option value="EST5EDT,M3.2.0,M11.1.0">USA Este (UTC-5/-4)</option>
+      <option value="CST6CDT,M3.2.0,M11.1.0">USA Centro (UTC-6/-5)</option>
+      <option value="MST7MDT,M3.2.0,M11.1.0">USA Montana (UTC-7/-6)</option>
+      <option value="PST8PDT,M3.2.0,M11.1.0">USA Pacifico (UTC-8/-7)</option>
+    </select>
+    <button onclick="saveTz()">Guardar</button>
+    <div class="hint">Se aplica de inmediato, sin reiniciar. Afecta la hora en los registros (requiere WiFi de casa para NTP).</div>
+  </div>
 </div>
 
 <div id="tab-admins" style="display:none">
@@ -644,7 +699,7 @@ function chk(r){if(r&&r.status===401){window.location='/login';return false;}ret
 function tab(id){
   document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===id));
   ['logs','users','net','admins'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
-  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();}if(id==='admins')loadAdmins();
+  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();loadTz();}if(id==='admins')loadAdmins();
 }
 document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();tab(a.dataset.tab);}));
 async function loadStatus(){
@@ -714,6 +769,17 @@ async function saveTelegram(){
     notifyUnknown:document.getElementById('tgUnknown').checked
   })});
   if(r.ok)alert('Guardado.');else alert('Error al guardar');
+}
+async function loadTz(){
+  const r=await fetch('/api/timezone');if(!chk(r))return;const j=await r.json();
+  const sel=document.getElementById('tzPosix');
+  const v=j.posix||'<-06>6';
+  for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===v){sel.selectedIndex=i;return;}}
+}
+async function saveTz(){
+  const v=document.getElementById('tzPosix').value;
+  const r=await fetch('/api/timezone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({posix:v})});
+  if(r.ok)alert('Zona horaria guardada.');else alert('Error al guardar');
 }
 async function loadAdmins(){
   const r=await fetch('/api/admin/users');if(!chk(r))return;const j=await r.json();
@@ -882,6 +948,25 @@ void handleTelegramSet() {
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
+void handleTzGet() {
+  if (!requireAuth()) return;
+  String posix; loadTzConfig(posix);
+  server.send(200, "application/json", "{\"posix\":\"" + posix + "\"}");
+}
+
+void handleTzSet() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String posix = doc["posix"].as<String>();
+  if (posix.length() == 0) { server.send(400, "text/plain", "posix requerido"); return; }
+  saveTzConfig(posix);
+  setenv("TZ", posix.c_str(), 1);
+  tzset();
+  Serial.printf("[TZ] zona cambiada: %s\n", posix.c_str());
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 void handleUserToggle() {
   if (!requireAuth()) return;
   if (!server.hasArg("code")) { server.send(400, "text/plain", "code requerido"); return; }
@@ -1039,6 +1124,8 @@ void setupWebServer() {
   server.on("/api/admin/changepass",      HTTP_POST, handleAdminChangePass);
   server.on("/api/telegram",              HTTP_GET,  handleTelegramGet);
   server.on("/api/telegram",              HTTP_POST, handleTelegramSet);
+  server.on("/api/timezone",              HTTP_GET,  handleTzGet);
+  server.on("/api/timezone",              HTTP_POST, handleTzSet);
   server.begin();
   Serial.println("[WEB] servidor iniciado");
 }
@@ -1056,6 +1143,7 @@ void setup() {
   if (!LittleFS.begin(true)) Serial.println("[FS] error montando LittleFS");
 
   bootstrapFirstAdmin();
+  applyTimezone();
 
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, LOW);
