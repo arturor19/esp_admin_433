@@ -105,8 +105,8 @@ void   saveTzConfig(const String &posix);
 void   applyTimezone();
 
 // ================= STORAGE =================
-// /users.json : [{"code":123456,"name":"Papa"}]
-// /logs.json  : [{"ts":"...","name":"Papa","code":123456}]
+// /users.json : [{"code":123456,"name":"Usuario"}]
+// /logs.json  : [{"ts":"...","name":"Usuario","code":123456}]
 // /wifi.json  : {"ssid":"...","pass":"..."}   (red de casa)
 // /ap.json    : {"ssid":"...","pass":"..."}   (AP del porton)
 
@@ -611,7 +611,7 @@ button.blk{background:var(--warn);color:#1a1200}
   <div class="card" id="users"></div>
   <h2>Aprender control nuevo</h2>
   <div class="card">
-    <input type="text" id="newName" placeholder="Nombre (ej. Papa)" maxlength="20">
+    <input type="text" id="newName" placeholder="Nombre (ej. Usuario)" maxlength="20">
     <div class="grid" style="margin-top:8px">
       <button onclick="startLearn()">Iniciar aprendizaje</button>
       <button class="sec" onclick="cancelLearn()">Cancelar</button>
