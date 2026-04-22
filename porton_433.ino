@@ -32,6 +32,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "mbedtls/md5.h"  // ESP32 SDK — IntelliSense no lo ve, pero compila correctamente
+#include <WiFiClientSecure.h>
 
 // =================== CONFIG ===================
 #define RF_RX_PIN          27               // pin DATA del receptor 433MHz
@@ -97,6 +98,9 @@ void   invalidateSession(const String &token);
 void   cleanExpiredSessions();
 bool   requireAuth();
 String sessionUsername();
+bool   loadTelegramConfig(JsonDocument &doc);
+bool   saveTelegramConfig(JsonDocument &doc);
+void   sendTelegram(const String &eventType, const String &message);
 
 // ================= STORAGE =================
 // /users.json : [{"code":123456,"name":"Papa"}]
@@ -203,6 +207,61 @@ String currentTimestamp() {
   struct tm tm; localtime_r(&now, &tm);
   char buf[32]; strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
   return String(buf);
+}
+
+// ================= TELEGRAM =================
+bool loadTelegramConfig(JsonDocument &doc) {
+  doc["enabled"]       = false;
+  doc["token"]         = "";
+  doc["chatId"]        = "";
+  doc["notifyAccess"]  = true;
+  doc["notifyBlocked"] = true;
+  doc["notifyUnknown"] = false;
+  if (!LittleFS.exists("/telegram.json")) return true;
+  File f = LittleFS.open("/telegram.json", "r");
+  if (!f) return false;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err) { doc["enabled"] = false; }
+  return true;
+}
+
+bool saveTelegramConfig(JsonDocument &doc) {
+  File f = LittleFS.open("/telegram.json", "w");
+  if (!f) return false;
+  serializeJson(doc, f);
+  f.close();
+  return true;
+}
+
+void sendTelegram(const String &eventType, const String &message) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  JsonDocument cfg; loadTelegramConfig(cfg);
+  if (!(cfg["enabled"] | false)) return;
+  if (!(cfg[eventType] | false)) return;
+  String token  = cfg["token"].as<String>();
+  String chatId = cfg["chatId"].as<String>();
+  if (token.length() == 0 || chatId.length() == 0) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(5);
+  if (!client.connect("api.telegram.org", 443)) {
+    Serial.println("[TG] error conectando");
+    return;
+  }
+  String body = "{\"chat_id\":\"" + chatId + "\",\"text\":\"" + message + "\"}";
+  String path = "/bot" + token + "/sendMessage";
+  client.print("POST " + path + " HTTP/1.1\r\n");
+  client.print("Host: api.telegram.org\r\n");
+  client.print("Content-Type: application/json\r\n");
+  client.print("Content-Length: " + String(body.length()) + "\r\n");
+  client.print("Connection: close\r\n\r\n");
+  client.print(body);
+  unsigned long t = millis();
+  while (client.available() == 0 && millis() - t < 4000) delay(10);
+  client.stop();
+  Serial.println("[TG] mensaje enviado: " + message);
 }
 
 // ================= AUTH =================
@@ -544,6 +603,21 @@ button.blk{background:var(--warn);color:#1a1200}
     <button style="margin-top:10px" onclick="saveWifi()">Guardar y reiniciar</button>
     <div class="hint">Si falla la conexion siempre podes volver al AP del porton.</div>
   </div>
+  <h2>Notificaciones Telegram</h2>
+  <div class="card">
+    <div class="row" style="padding:8px 0">
+      <span style="font-weight:600">Activar notificaciones</span>
+      <input type="checkbox" id="tgEnabled" style="width:auto;height:18px;width:18px;cursor:pointer">
+    </div>
+    <input type="text" id="tgToken" placeholder="Bot Token (ej. 123456789:ABC-DEF...)" style="margin-top:4px" maxlength="128">
+    <input type="text" id="tgChatId" placeholder="Chat ID (ej. -1001234567890)" style="margin-top:8px" maxlength="32">
+    <div style="margin-top:12px;font-size:12px;color:var(--mut);margin-bottom:4px">Notificar cuando:</div>
+    <div class="row" style="padding:6px 0"><span style="font-size:13px">Acceso autorizado</span><input type="checkbox" id="tgAccess" style="width:auto;height:18px;width:18px;cursor:pointer"></div>
+    <div class="row" style="padding:6px 0"><span style="font-size:13px">Control bloqueado</span><input type="checkbox" id="tgBlocked" style="width:auto;height:18px;width:18px;cursor:pointer"></div>
+    <div class="row" style="padding:6px 0"><span style="font-size:13px">Codigo desconocido</span><input type="checkbox" id="tgUnknown" style="width:auto;height:18px;width:18px;cursor:pointer"></div>
+    <button style="margin-top:10px" onclick="saveTelegram()">Guardar</button>
+    <div class="hint">Requiere WiFi de casa activo. Obtene el token con @BotFather en Telegram y el Chat ID con @userinfobot.</div>
+  </div>
 </div>
 
 <div id="tab-admins" style="display:none">
@@ -570,7 +644,7 @@ function chk(r){if(r&&r.status===401){window.location='/login';return false;}ret
 function tab(id){
   document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===id));
   ['logs','users','net','admins'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
-  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net')loadStatus();if(id==='admins')loadAdmins();
+  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();}if(id==='admins')loadAdmins();
 }
 document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();tab(a.dataset.tab);}));
 async function loadStatus(){
@@ -620,6 +694,26 @@ async function saveAp(){
   if(!confirm('El Porton Admin se va a reiniciar. Continuar?'))return;
   const r=await fetch('/api/ap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,pass})});
   if(r.ok)alert('Guardado. Reiniciando...');else alert('Error al guardar');
+}
+async function loadTelegram(){
+  const r=await fetch('/api/telegram');if(!chk(r))return;const j=await r.json();
+  document.getElementById('tgEnabled').checked=j.enabled||false;
+  document.getElementById('tgToken').value=j.token||'';
+  document.getElementById('tgChatId').value=j.chatId||'';
+  document.getElementById('tgAccess').checked=j.notifyAccess!==false;
+  document.getElementById('tgBlocked').checked=j.notifyBlocked!==false;
+  document.getElementById('tgUnknown').checked=j.notifyUnknown||false;
+}
+async function saveTelegram(){
+  const r=await fetch('/api/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    enabled:document.getElementById('tgEnabled').checked,
+    token:document.getElementById('tgToken').value.trim(),
+    chatId:document.getElementById('tgChatId').value.trim(),
+    notifyAccess:document.getElementById('tgAccess').checked,
+    notifyBlocked:document.getElementById('tgBlocked').checked,
+    notifyUnknown:document.getElementById('tgUnknown').checked
+  })});
+  if(r.ok)alert('Guardado.');else alert('Error al guardar');
 }
 async function loadAdmins(){
   const r=await fetch('/api/admin/users');if(!chk(r))return;const j=await r.json();
@@ -771,6 +865,21 @@ void handleApSet() {
   Serial.printf("[AP] config nueva: %s (%s)\n", ssid.c_str(), pass.length() ? "protegido" : "abierto");
   server.send(200, "application/json", "{\"ok\":true}");
   delay(500); ESP.restart();
+}
+
+void handleTelegramGet() {
+  if (!requireAuth()) return;
+  JsonDocument doc; loadTelegramConfig(doc);
+  String s; serializeJson(doc, s);
+  server.send(200, "application/json", s);
+}
+
+void handleTelegramSet() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  saveTelegramConfig(doc);
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleUserToggle() {
@@ -928,6 +1037,8 @@ void setupWebServer() {
   server.on("/api/admin/users/add",       HTTP_POST, handleAdminAdd);
   server.on("/api/admin/users/delete",               handleAdminDelete);
   server.on("/api/admin/changepass",      HTTP_POST, handleAdminChangePass);
+  server.on("/api/telegram",              HTTP_GET,  handleTelegramGet);
+  server.on("/api/telegram",              HTTP_POST, handleTelegramSet);
   server.begin();
   Serial.println("[WEB] servidor iniciado");
 }
@@ -1020,8 +1131,12 @@ void loop() {
       digitalWrite(RELAY_PIN, HIGH);
       relayEndMs = millis() + RELAY_PULSE_MS;
       Serial.printf("[RELAY] activado para %s\n", name.c_str());
+      sendTelegram("notifyAccess", "Acceso: " + name + " - " + currentTimestamp());
     } else if (blocked) {
       Serial.printf("[BLOQUEADO] %s (codigo %lu)\n", name.c_str(), code);
+      sendTelegram("notifyBlocked", "BLOQUEADO: " + name + " - " + currentTimestamp());
+    } else {
+      sendTelegram("notifyUnknown", "Desconocido: codigo " + String(code) + " - " + currentTimestamp());
     }
 
     addLog(name, code, blocked && known);

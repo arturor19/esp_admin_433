@@ -86,9 +86,9 @@ Instalar desde el gestor de librerías (**Sketch → Incluir librería → Gesti
 | **RCSwitch** | sui77 |
 | **ArduinoJson** | Benoit Blanchon |
 
-Las demás (`WiFi`, `WebServer`, `LittleFS`, `time.h`, `mbedtls/md5.h`) vienen incluidas en el core de ESP32.
+Las demás (`WiFi`, `WebServer`, `LittleFS`, `WiFiClientSecure`, `time.h`, `mbedtls/md5.h`) vienen incluidas en el core de ESP32.
 
-> **Nota:** Si el IDE muestra error en `mbedtls/md5.h`, es un falso positivo del IntelliSense. El código compila correctamente con el toolchain del ESP32.
+> **Nota:** Si el IDE muestra errores en `mbedtls/md5.h` o `WiFiClientSecure.h`, son falsos positivos del IntelliSense. El código compila correctamente con el toolchain del ESP32.
 
 ---
 
@@ -166,6 +166,31 @@ Lista todos los controles remotos registrados y permite gestionarlos.
 
 **Borrar un control:**
 - **Borrar** lo elimina definitivamente del sistema.
+
+### Pestaña — Notificaciones Telegram
+
+Configuración opcional para recibir mensajes en un grupo o chat de Telegram.
+
+**Cómo configurarlo:**
+1. Abrí Telegram y buscá **@BotFather**
+2. Enviá `/newbot` y seguí los pasos para crear tu bot — te dará un **Token**
+3. Agregá el bot al grupo donde querés recibir las notificaciones
+4. Buscá **@userinfobot** en Telegram, reenviále un mensaje del grupo y te dará el **Chat ID** (número negativo para grupos, ej. `-1001234567890`)
+5. En la pestaña **Red → Notificaciones Telegram** del panel web:
+   - Activá el toggle
+   - Pegá el Token y el Chat ID
+   - Elegí qué eventos notificar
+   - Guardá
+
+**Eventos configurables:**
+
+| Evento | Mensaje que llega |
+|---|---|
+| Acceso autorizado | `Acceso: Papa - 2026-04-21 10:30:00` |
+| Control bloqueado | `BLOQUEADO: Vecino - 2026-04-21 10:31:00` |
+| Código desconocido | `Desconocido: codigo 123456 - 2026-04-21 10:32:00` |
+
+> Requiere que el ESP32 esté conectado al WiFi de casa. Si no hay conexión, el portón sigue funcionando normalmente y simplemente no envía la notificación.
 
 ### Pestaña — Red
 
