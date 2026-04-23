@@ -26,6 +26,7 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 | Receptor 433MHz | **MX-RM-5V** (superheterodino, 5V) |
 | Relevador (relay) | Módulo de 1 canal, 5V o 3.3V según tu módulo |
 | LED azul | Integrado en GPIO 2 (ya incluido en la mayoría de DevKits) |
+| RTC DS3231 | **Opcional** — mantiene hora sin internet ni batería de respaldo (incluye batería CR2032) |
 
 ### Pinout del MX-RM-5V
 
@@ -72,6 +73,10 @@ El módulo tiene 4 pines (de izquierda a derecha mirando la cara con componentes
 | Relevador (IN) | 26 |
 | LED de estado | 2 (integrado) |
 | Botón factory reset | 0 (BOOT, integrado) |
+| DS3231 SDA (opcional) | 21 (I2C por defecto) |
+| DS3231 SCL (opcional) | 22 (I2C por defecto) |
+
+> El DS3231 opera a 3.3V. Conectar VCC al pin 3.3V del ESP32 (no al 5V).
 
 > Los pines se pueden cambiar modificando las constantes al inicio de `porton_433.ino`.
 
@@ -85,6 +90,7 @@ Instalar desde el gestor de librerías (**Sketch → Incluir librería → Gesti
 |---|---|
 | **RCSwitch** | sui77 |
 | **ArduinoJson** | Benoit Blanchon |
+| **RTClib** | Adafruit (opcional, solo si usás el módulo DS3231) |
 
 Las demás (`WiFi`, `WebServer`, `LittleFS`, `WiFiClientSecure`, `time.h`, `mbedtls/md5.h`) vienen incluidas en el core de ESP32.
 
@@ -193,6 +199,15 @@ Configuración opcional para recibir mensajes en un grupo o chat de Telegram.
 > Requiere que el ESP32 esté conectado al WiFi de casa. Si no hay conexión, el portón sigue funcionando normalmente y simplemente no envía la notificación.
 
 ### Pestaña — Red
+
+**Reloj RTC (DS3231):**
+Si el módulo DS3231 está conectado, el panel muestra su estado (Conectado / No detectado) y la hora local actual. Desde aquí podés establecer la hora manualmente — ingresás la hora en tu zona horaria local y el sistema la convierte a UTC internamente.
+
+Prioridad de sincronización:
+1. Al arrancar: si el DS3231 tiene hora válida (año ≥ 2020) la carga al sistema.
+2. Al conectar al WiFi de casa: NTP sincroniza y actualiza el DS3231.
+3. Sin internet: el DS3231 mantiene la hora con su batería CR2032.
+4. Sin DS3231 ni internet: la hora se muestra como `uptime+Xs`.
 
 **Zona horaria:**
 Selector de zona horaria con predeterminado México Centro (UTC-6). Se aplica al instante sin reiniciar. Opciones disponibles: México (tres zonas), países de América Latina, España y UTC.

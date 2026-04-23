@@ -33,6 +33,8 @@
 #include <time.h>
 #include "mbedtls/md5.h"  // ESP32 SDK — IntelliSense no lo ve, pero compila correctamente
 #include <WiFiClientSecure.h>
+#include <Wire.h>
+#include <RTClib.h>       // Adafruit RTClib — instalar desde gestor de librerias
 
 // =================== CONFIG ===================
 #define RF_RX_PIN          27               // pin DATA del receptor 433MHz
@@ -52,10 +54,13 @@
 #define RELAY_PULSE_MS     2000             // cuanto tiempo permanece activo (ms)
 // ==============================================
 
-RCSwitch   mySwitch = RCSwitch();
-WebServer  server(80);
+RCSwitch     mySwitch = RCSwitch();
+WebServer    server(80);
+RTC_DS3231   rtc;
+bool         rtcOk = false;
 
 String        learnName = "";
+String        learnCloneOf = "";   // nombre previo si el codigo ya existia (posible clon)
 unsigned long lastCode = 0;
 unsigned long lastDetectionMs = 0;
 bool          timeOk = false;
@@ -103,6 +108,8 @@ void   sendTelegram(const String &eventType, const String &message);
 bool   loadTzConfig(String &posix);
 void   saveTzConfig(const String &posix);
 void   applyTimezone();
+void   syncSystemFromRtc();
+void   syncRtcFromSystem();
 
 // ================= STORAGE =================
 // /users.json : [{"code":123456,"name":"Usuario"}]
@@ -264,6 +271,27 @@ void sendTelegram(const String &eventType, const String &message) {
   while (client.available() == 0 && millis() - t < 4000) delay(10);
   client.stop();
   Serial.println("[TG] mensaje enviado: " + message);
+}
+
+// ================= RTC DS3231 =================
+void syncSystemFromRtc() {
+  if (!rtcOk) return;
+  DateTime t = rtc.now();
+  if (t.year() < 2020) { Serial.println("[RTC] hora no valida, ignorando"); return; }
+  struct timeval tv;
+  tv.tv_sec  = (time_t)t.unixtime();
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  timeOk = true;
+  Serial.printf("[RTC] hora cargada: %04d-%02d-%02d %02d:%02d:%02d UTC\n",
+                t.year(), t.month(), t.day(), t.hour(), t.minute(), t.second());
+}
+
+void syncRtcFromSystem() {
+  if (!rtcOk) return;
+  time_t now; time(&now);
+  rtc.adjust(DateTime((uint32_t)now));
+  Serial.println("[RTC] DS3231 actualizado desde NTP");
 }
 
 // ================= TIMEZONE =================
@@ -468,7 +496,11 @@ void setupWiFi() {
       Serial.printf("[STA] OK  IP=%s\n", WiFi.localIP().toString().c_str());
       configTime(0, 0, NTP_SERVER);
       struct tm tm;
-      if (getLocalTime(&tm, 5000)) { timeOk = true; Serial.println("[NTP] hora sincronizada"); }
+      if (getLocalTime(&tm, 5000)) {
+        timeOk = true;
+        Serial.println("[NTP] hora sincronizada");
+        syncRtcFromSystem();
+      }
     } else {
       Serial.println("[STA] fallo. Usa el AP para configurar.");
     }
@@ -607,6 +639,7 @@ button.blk{background:var(--warn);color:#1a1200}
 
 <div id="tab-users" style="display:none">
   <div id="learnBox"></div>
+  <div id="cloneBox" style="display:none;background:var(--err);color:#fff;padding:12px;border-radius:8px;margin-bottom:10px;font-weight:600"></div>
   <h2>Controles guardados</h2>
   <div class="card" id="users"></div>
   <h2>Aprender control nuevo</h2>
@@ -673,6 +706,16 @@ button.blk{background:var(--warn);color:#1a1200}
     <button onclick="saveTz()">Guardar</button>
     <div class="hint">Se aplica de inmediato, sin reiniciar. Afecta la hora en los registros (requiere WiFi de casa para NTP).</div>
   </div>
+  <h2>Reloj RTC (DS3231)</h2>
+  <div class="card">
+    <div class="row" style="padding:6px 0"><span>Modulo DS3231</span><span id="rtcStatus" class="tag">-</span></div>
+    <div class="row" style="padding:6px 0"><span>Hora actual (local)</span><span id="rtcNow" class="tag" style="font-family:monospace">-</span></div>
+    <h2 style="margin:14px 0 6px">Establecer hora manual</h2>
+    <div class="hint" style="margin-bottom:8px">Ingresar en hora local segun la zona configurada arriba. Util cuando no hay internet.</div>
+    <input type="datetime-local" id="rtcDatetime" step="1" style="margin-bottom:10px">
+    <button onclick="setRtcTime()">Establecer hora</button>
+    <div class="hint">Con WiFi de casa la hora se sincroniza automaticamente desde NTP al conectar.</div>
+  </div>
 </div>
 
 <div id="tab-admins" style="display:none">
@@ -699,7 +742,7 @@ function chk(r){if(r&&r.status===401){window.location='/login';return false;}ret
 function tab(id){
   document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===id));
   ['logs','users','net','admins'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
-  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();loadTz();}if(id==='admins')loadAdmins();
+  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();loadTz();loadRtc();}if(id==='admins')loadAdmins();
 }
 document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();tab(a.dataset.tab);}));
 async function loadStatus(){
@@ -719,10 +762,20 @@ async function loadUsers(){
   const r=await fetch('/api/users');if(!chk(r))return;const j=await r.json();
   const el=document.getElementById('users');
   if(!j.users.length)el.innerHTML='<div class="empty">Todavia no hay controles aprendidos</div>';
-  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}</div></div><div style="display:flex;gap:6px"><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
+  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}</div></div><div style="display:flex;gap:6px"><button class="sec" style="width:auto;padding:6px 10px" onclick="renameUser(${u.code},'${u.name.replace(/'/g,"\\'")}')">Renombrar</button><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
   const lb=document.getElementById('learnBox');
   lb.innerHTML=j.learning?`<div class="learning">Esperando boton del control para "${j.learning}"...</div>`:'';
   if(j.learning)setTimeout(loadUsers,1500);
+  const cb=document.getElementById('cloneBox');
+  if(j.cloneWarning){cb.textContent='Aviso: el codigo recibido ya estaba registrado como "'+j.cloneWarning+'". Puede ser un control clonado.';cb.style.display='';}
+  else cb.style.display='none';
+}
+async function renameUser(code,current){
+  const n=prompt('Nuevo nombre para "'+current+'":', current);
+  if(!n||!n.trim()||n.trim()===current)return;
+  const r=await fetch('/api/users/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,name:n.trim()})});
+  const j=await r.json();
+  if(r.ok)loadUsers();else alert(j.error||'Error');
 }
 async function toggleUser(code){await fetch('/api/users/toggle?code='+code);loadUsers();}
 async function startLearn(){
@@ -775,6 +828,24 @@ async function loadTz(){
   const sel=document.getElementById('tzPosix');
   const v=j.posix||'<-06>6';
   for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===v){sel.selectedIndex=i;return;}}
+}
+async function loadRtc(){
+  const r=await fetch('/api/rtc');if(!chk(r))return;const j=await r.json();
+  const st=document.getElementById('rtcStatus');
+  st.textContent=j.rtcOk?'Conectado':'No detectado';
+  st.className='tag'+(j.rtcOk?'':' red');
+  const hn=document.getElementById('rtcNow');
+  if(j.local){hn.textContent=j.local.replace('T',' ');document.getElementById('rtcDatetime').value=j.local;}
+  else hn.textContent='sin hora';
+}
+async function setRtcTime(){
+  const v=document.getElementById('rtcDatetime').value;
+  if(!v){alert('Ingresa fecha y hora');return;}
+  const [date,time]=v.split('T');
+  const [year,month,day]=date.split('-').map(Number);
+  const parts=(time||'00:00:00').split(':').map(Number);
+  const r=await fetch('/api/rtc/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({year,month,day,hour:parts[0],minute:parts[1],second:parts[2]||0})});
+  if(r.ok){alert('Hora establecida.');loadRtc();}else alert('Error al establecer hora');
 }
 async function saveTz(){
   const v=document.getElementById('tzPosix').value;
@@ -875,8 +946,10 @@ void handleUsers() {
   if (!requireAuth()) return;
   JsonDocument users; loadUsers(users);
   JsonDocument out;
-  out["users"]    = users.as<JsonArray>();
-  out["learning"] = learnName;
+  out["users"]       = users.as<JsonArray>();
+  out["learning"]    = learnName;
+  out["cloneWarning"] = learnCloneOf;
+  learnCloneOf = "";
   String s; serializeJson(out, s);
   server.send(200, "application/json", s);
 }
@@ -978,6 +1051,74 @@ void handleUserToggle() {
       break;
     }
   }
+  saveUsers(doc);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleRtcGet() {
+  if (!requireAuth()) return;
+  JsonDocument doc;
+  doc["rtcOk"]  = rtcOk;
+  doc["timeOk"] = timeOk;
+  // hora local actual (desde sistema, que puede venir del RTC o NTP)
+  time_t now; time(&now);
+  struct tm lt; localtime_r(&now, &lt);
+  char local[20]; strftime(local, sizeof(local), "%Y-%m-%dT%H:%M:%S", &lt);
+  if (timeOk) doc["local"] = local;
+  // hora raw del chip DS3231
+  if (rtcOk) {
+    DateTime t = rtc.now();
+    char raw[20]; snprintf(raw, sizeof(raw), "%04d-%02d-%02dT%02d:%02d:%02d",
+      t.year(), t.month(), t.day(), t.hour(), t.minute(), t.second());
+    doc["rtcUtc"] = raw;
+  }
+  String s; serializeJson(doc, s);
+  server.send(200, "application/json", s);
+}
+
+void handleRtcSet() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
+  JsonDocument req; deserializeJson(req, server.arg("plain"));
+  int yr = req["year"]   | 0;
+  int mo = req["month"]  | 0;
+  int dy = req["day"]    | 0;
+  int hr = req["hour"]   | 0;
+  int mn = req["minute"] | 0;
+  int sc = req["second"] | 0;
+  if (yr < 2020 || mo < 1 || mo > 12 || dy < 1 || dy > 31 || hr > 23 || mn > 59 || sc > 59) {
+    server.send(400, "application/json", "{\"error\":\"fecha invalida\"}"); return;
+  }
+  // el usuario ingresa hora local; mktime() la convierte a UTC usando TZ
+  struct tm t = {};
+  t.tm_year = yr - 1900; t.tm_mon = mo - 1; t.tm_mday = dy;
+  t.tm_hour = hr;        t.tm_min = mn;     t.tm_sec  = sc;
+  t.tm_isdst = -1;
+  time_t utc = mktime(&t);
+  if (rtcOk) rtc.adjust(DateTime((uint32_t)utc));
+  struct timeval tv; tv.tv_sec = utc; tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  timeOk = true;
+  Serial.printf("[RTC] hora manual: %04d-%02d-%02d %02d:%02d:%02d local\n", yr, mo, dy, hr, mn, sc);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleUserRename() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"body requerido\"}"); return; }
+  JsonDocument req; deserializeJson(req, server.arg("plain"));
+  unsigned long code = req["code"].as<unsigned long>();
+  String name = req["name"].as<String>();
+  name.trim();
+  if (name.length() == 0 || name.length() > 20) {
+    server.send(400, "application/json", "{\"error\":\"nombre invalido\"}"); return;
+  }
+  JsonDocument doc; loadUsers(doc);
+  bool found = false;
+  for (JsonObject u : doc.as<JsonArray>()) {
+    if (u["code"].as<unsigned long>() == code) { u["name"] = name; found = true; break; }
+  }
+  if (!found) { server.send(404, "application/json", "{\"error\":\"control no encontrado\"}"); return; }
   saveUsers(doc);
   server.send(200, "application/json", "{\"ok\":true}");
 }
@@ -1114,6 +1255,7 @@ void setupWebServer() {
   server.on("/api/users",              handleUsers);
   server.on("/api/users/delete",       handleUserDelete);
   server.on("/api/users/toggle",       handleUserToggle);
+  server.on("/api/users/rename",  HTTP_POST, handleUserRename);
   server.on("/api/learn/start",        handleLearnStart);
   server.on("/api/learn/cancel",       handleLearnCancel);
   server.on("/api/wifi",   HTTP_POST,  handleWifiSet);
@@ -1126,6 +1268,8 @@ void setupWebServer() {
   server.on("/api/telegram",              HTTP_POST, handleTelegramSet);
   server.on("/api/timezone",              HTTP_GET,  handleTzGet);
   server.on("/api/timezone",              HTTP_POST, handleTzSet);
+  server.on("/api/rtc",                   HTTP_GET,  handleRtcGet);
+  server.on("/api/rtc/set",               HTTP_POST, handleRtcSet);
   server.begin();
   Serial.println("[WEB] servidor iniciado");
 }
@@ -1144,6 +1288,15 @@ void setup() {
 
   bootstrapFirstAdmin();
   applyTimezone();
+
+  Wire.begin();
+  if (rtc.begin()) {
+    rtcOk = true;
+    Serial.println("[RTC] DS3231 listo");
+    syncSystemFromRtc();
+  } else {
+    Serial.println("[RTC] DS3231 no encontrado (opcional)");
+  }
 
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, LOW);
@@ -1187,13 +1340,22 @@ void loop() {
       JsonDocument doc; loadUsers(doc);
       JsonArray arr = doc.as<JsonArray>();
       bool existed = false;
+      String oldName = "";
       for (JsonObject u : arr) {
-        if (u["code"].as<unsigned long>() == code) { u["name"] = learnName; existed = true; break; }
+        if (u["code"].as<unsigned long>() == code) {
+          oldName = u["name"].as<String>();
+          u["name"] = learnName;
+          existed = true;
+          break;
+        }
       }
       if (!existed) {
         JsonObject nu = arr.add<JsonObject>();
         nu["code"] = code; nu["name"] = learnName; nu["blocked"] = false;
       }
+      learnCloneOf = (existed && oldName != learnName) ? oldName : "";
+      if (learnCloneOf.length() > 0)
+        Serial.printf("[CLON] codigo %lu ya existia como '%s'\n", code, oldName.c_str());
       saveUsers(doc);
       Serial.printf("[LEARN] %s -> %lu\n", learnName.c_str(), code);
       learnName = "";
