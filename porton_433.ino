@@ -52,6 +52,8 @@
 #define MAX_ADMINS         10
 #define RELAY_PIN          26               // pin del relevador (cambiar segun tu cableado)
 #define RELAY_PULSE_MS     2000             // cuanto tiempo permanece activo (ms)
+#define RF_TX_PIN          25               // pin DATA del transmisor FS1000A
+#define PROVISION_DURATION_MS 15000         // 15 seg transmitiendo codigo nuevo
 // ==============================================
 
 RCSwitch     mySwitch = RCSwitch();
@@ -61,6 +63,10 @@ bool         rtcOk = false;
 
 String        learnName = "";
 String        learnCloneOf = "";   // nombre previo si el codigo ya existia (posible clon)
+unsigned long provisionCode     = 0;
+String        provisionName     = "";
+unsigned long provisionEndMs    = 0;
+unsigned long provisionNextTxMs = 0;
 unsigned long lastCode = 0;
 unsigned long lastDetectionMs = 0;
 bool          timeOk = false;
@@ -639,6 +645,7 @@ button.blk{background:var(--warn);color:#1a1200}
 
 <div id="tab-users" style="display:none">
   <div id="learnBox"></div>
+  <div id="provBox" style="display:none;background:var(--warn);color:#1a1200;padding:12px;border-radius:8px;margin-bottom:10px;font-weight:600"></div>
   <div id="cloneBox" style="display:none;background:var(--err);color:#fff;padding:12px;border-radius:8px;margin-bottom:10px;font-weight:600"></div>
   <h2>Controles guardados</h2>
   <div class="card" id="users"></div>
@@ -650,6 +657,15 @@ button.blk{background:var(--warn);color:#1a1200}
       <button class="sec" onclick="cancelLearn()">Cancelar</button>
     </div>
     <div class="hint">Toca iniciar y despues apreta una vez el boton del control.</div>
+  </div>
+  <h2>Generar control unico</h2>
+  <div class="card">
+    <input type="text" id="provName" placeholder="Nombre (ej. Visitante)" maxlength="20">
+    <div class="grid" style="margin-top:8px">
+      <button onclick="startProvision()">Generar y transmitir</button>
+      <button class="sec" onclick="cancelProvision()">Cancelar</button>
+    </div>
+    <div class="hint">El porton genera un codigo unico y lo transmite 15 seg por el FS1000A. Pon el control en modo aprendizaje y apuntalo al porton.</div>
   </div>
 </div>
 
@@ -765,7 +781,10 @@ async function loadUsers(){
   else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}</div></div><div style="display:flex;gap:6px"><button class="sec" style="width:auto;padding:6px 10px" onclick="renameUser(${u.code},'${u.name.replace(/'/g,"\\'")}')">Renombrar</button><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
   const lb=document.getElementById('learnBox');
   lb.innerHTML=j.learning?`<div class="learning">Esperando boton del control para "${j.learning}"...</div>`:'';
-  if(j.learning)setTimeout(loadUsers,1500);
+  const pb=document.getElementById('provBox');
+  if(j.provisioning){pb.textContent='Transmitiendo codigo '+j.provisionCode+' para "'+j.provisioning+'"... Pon el control en modo aprendizaje.';pb.style.display='';}
+  else pb.style.display='none';
+  if(j.learning||j.provisioning)setTimeout(loadUsers,1500);
   const cb=document.getElementById('cloneBox');
   if(j.cloneWarning){cb.textContent='Aviso: el codigo recibido ya estaba registrado como "'+j.cloneWarning+'". Puede ser un control clonado.';cb.style.display='';}
   else cb.style.display='none';
@@ -785,6 +804,13 @@ async function startLearn(){
   document.getElementById('newName').value='';loadUsers();
 }
 async function cancelLearn(){await fetch('/api/learn/cancel');loadUsers();}
+async function startProvision(){
+  const name=document.getElementById('provName').value.trim();
+  if(!name){alert('Ingresa un nombre');return;}
+  await fetch('/api/provision/start?name='+encodeURIComponent(name));
+  document.getElementById('provName').value='';loadUsers();
+}
+async function cancelProvision(){await fetch('/api/provision/cancel');loadUsers();}
 async function delUser(code){if(!confirm('Borrar este control?'))return;await fetch('/api/users/delete?code='+code);loadUsers();}
 async function clearLogs(){if(!confirm('Borrar TODOS los registros?'))return;await fetch('/api/logs/clear');loadLogs();}
 async function saveWifi(){
@@ -946,9 +972,11 @@ void handleUsers() {
   if (!requireAuth()) return;
   JsonDocument users; loadUsers(users);
   JsonDocument out;
-  out["users"]       = users.as<JsonArray>();
-  out["learning"]    = learnName;
+  out["users"]        = users.as<JsonArray>();
+  out["learning"]     = learnName;
   out["cloneWarning"] = learnCloneOf;
+  out["provisioning"] = provisionName;
+  out["provisionCode"] = provisionCode;
   learnCloneOf = "";
   String s; serializeJson(out, s);
   server.send(200, "application/json", s);
@@ -965,6 +993,31 @@ void handleLearnStart() {
 void handleLearnCancel() {
   if (!requireAuth()) return;
   learnName = "";
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleProvisionStart() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("name")) { server.send(400, "text/plain", "name requerido"); return; }
+  learnName = "";  // cancelar aprendizaje si estaba activo
+  provisionName = server.arg("name");
+  do { provisionCode = esp_random() & 0x00FFFFFFUL; } while (provisionCode == 0);
+
+  JsonDocument doc; loadUsers(doc);
+  JsonObject nu = doc.as<JsonArray>().add<JsonObject>();
+  nu["code"] = provisionCode; nu["name"] = provisionName; nu["blocked"] = false;
+  saveUsers(doc);
+
+  provisionEndMs    = millis() + PROVISION_DURATION_MS;
+  provisionNextTxMs = millis();
+  Serial.printf("[PROVISION] %s -> %lu\n", provisionName.c_str(), provisionCode);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleProvisionCancel() {
+  if (!requireAuth()) return;
+  provisionName = "";
+  provisionCode = 0;
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1258,6 +1311,8 @@ void setupWebServer() {
   server.on("/api/users/rename",  HTTP_POST, handleUserRename);
   server.on("/api/learn/start",        handleLearnStart);
   server.on("/api/learn/cancel",       handleLearnCancel);
+  server.on("/api/provision/start",    handleProvisionStart);
+  server.on("/api/provision/cancel",   handleProvisionCancel);
   server.on("/api/wifi",   HTTP_POST,  handleWifiSet);
   server.on("/api/ap",     HTTP_POST,  handleApSet);
   server.on("/api/admin/users",                      handleAdminUsers);
@@ -1305,6 +1360,7 @@ void setup() {
   setupWebServer();
 
   mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+  mySwitch.enableTransmit(RF_TX_PIN);
   Serial.println("[RF] escuchando 433MHz en GPIO " + String(RF_RX_PIN));
   Serial.println("[BTN] mantene BOOT por 5s para factory reset del AP");
 }
@@ -1323,6 +1379,20 @@ void loop() {
   if (millis() - lastSessionCleanMs >= 60000UL) {
     lastSessionCleanMs = millis();
     cleanExpiredSessions();
+  }
+
+  // transmision de codigo de provisionamiento
+  if (provisionName.length() > 0) {
+    if (millis() >= provisionEndMs) {
+      Serial.printf("[PROVISION] fin para %s\n", provisionName.c_str());
+      provisionName = "";
+      provisionCode = 0;
+    } else if (millis() >= provisionNextTxMs) {
+      provisionNextTxMs = millis() + 1000;
+      mySwitch.disableReceive();
+      mySwitch.send(provisionCode, 24);
+      mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+    }
   }
 
   if (mySwitch.available()) {

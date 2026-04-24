@@ -6,7 +6,8 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 
 ## Características
 
-- Aprende y registra controles remotos 433MHz
+- Aprende y registra controles remotos 433MHz existentes
+- Genera y transmite códigos únicos de 24 bits (RNG de hardware) para provisionar controles baratos de aprendizaje
 - Activa un relevador físico al recibir un código autorizado
 - Bloquea controles individualmente sin borrarlos
 - Registro automático de cada acceso (fecha, hora, nombre)
@@ -24,6 +25,7 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 |---|---|
 | ESP32 DevKit | Cualquier variante con botón BOOT en GPIO 0 |
 | Receptor 433MHz | **MX-RM-5V** (superheterodino, 5V) |
+| Transmisor 433MHz | **FS1000A** — para provisionar controles con código único |
 | Relevador (relay) | Módulo de 1 canal, 5V o 3.3V según tu módulo |
 | LED azul | Integrado en GPIO 2 (ya incluido en la mayoría de DevKits) |
 | RTC DS3231 | **Opcional** — mantiene hora sin internet ni batería de respaldo (incluye batería CR2032) |
@@ -59,6 +61,18 @@ El módulo tiene 4 pines (de izquierda a derecha mirando la cara con componentes
 
 > **Antena:** para mayor alcance soldá un hilo rígido de **17.3 cm** al pin ANT (λ/4 a 433MHz).
 
+### Pinout del FS1000A
+
+El módulo tiene 3 pines:
+
+| Pin FS1000A | Conectar a |
+|---|---|
+| VCC | Pin **3.3V** del ESP32 (funciona; usar 5V para mayor alcance) |
+| GND | GND del ESP32 |
+| DATA | GPIO 25 del ESP32 |
+
+> **Antena:** soldá un hilo rígido de **17.3 cm** al pin ANT para mayor alcance.
+
 ### Diagrama de conexiones
 
 ![Diagrama de conexiones](diagrama_conexiones.svg)
@@ -70,6 +84,7 @@ El módulo tiene 4 pines (de izquierda a derecha mirando la cara con componentes
 | Señal | GPIO ESP32 |
 |---|---|
 | MX-RM-5V DATA (con divisor) | 27 |
+| FS1000A DATA | 25 |
 | Relevador (IN) | 26 |
 | LED de estado | 2 (integrado) |
 | Botón factory reset | 0 (BOOT, integrado) |
@@ -103,10 +118,11 @@ Las demás (`WiFi`, `WebServer`, `LittleFS`, `WiFiClientSecure`, `time.h`, `mbed
 Al inicio de `porton_433.ino` están las constantes que podés modificar:
 
 ```cpp
-#define RF_RX_PIN       27      // Pin DATA del receptor 433MHz
-#define RELAY_PIN       26      // Pin de señal del relevador
-#define RELAY_PULSE_MS  2000    // Tiempo que permanece activo el relevador (ms)
-#define TZ_OFFSET_SEC   -10800  // Zona horaria: UTC-3 Argentina
+#define RF_RX_PIN             27    // Pin DATA del receptor 433MHz
+#define RF_TX_PIN             25    // Pin DATA del transmisor FS1000A
+#define RELAY_PIN             26    // Pin de señal del relevador
+#define RELAY_PULSE_MS      2000    // Tiempo que permanece activo el relevador (ms)
+#define PROVISION_DURATION_MS 15000 // Segundos transmitiendo codigo nuevo
 ```
 
 ---
@@ -159,11 +175,18 @@ Historial de todos los accesos con fecha/hora, nombre y código del control.
 
 Lista todos los controles remotos registrados y permite gestionarlos.
 
-**Aprender un control nuevo:**
+**Aprender un control existente:**
 1. Escribí un nombre (ej. `Usuario`, `Vecino`).
 2. Presioná **Iniciar aprendizaje**.
 3. Apretá una vez el botón del control remoto.
 4. El código se guarda automáticamente.
+
+**Generar control único (requiere FS1000A conectado):**
+1. Escribí un nombre en la sección **Generar control unico**.
+2. Presioná **Generar y transmitir**.
+3. El ESP32 genera un código de 24 bits por RNG de hardware, lo guarda y lo transmite cada segundo durante 15 seg.
+4. Pon tu control de aprendizaje en modo aprendizaje y apuntalo al portón durante esos 15 seg.
+5. El control queda grabado con un código único que no comparte con ningún otro.
 
 **Bloquear / habilitar un control:**
 - **Bloquear** impide el acceso sin eliminar el control. El relevador no se activará.
@@ -288,10 +311,28 @@ Si olvidás el password del AP y no podés conectarte al panel:
 
 ---
 
+## Diagrama de flujo — transmisión de código único
+
+```
+Usuario presiona "Generar y transmitir"
+        │
+        ▼
+  ESP32 genera código 24 bits (esp_random())
+  Guarda en users.json con el nombre asignado
+        │
+        ▼
+  Transmite via FS1000A cada 1 segundo
+  durante 15 seg (GPIO25)
+        │
+        ▼
+  Control de aprendizaje copia el código
+  └── Listo — control queda registrado con código único
+```
+
 ## Diagrama de flujo — detección RF
 
 ```
-Señal 433MHz recibida
+Señal 433MHz recibida (GPIO27)
         │
         ▼
   ¿Modo aprendizaje activo?
