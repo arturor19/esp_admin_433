@@ -15,7 +15,8 @@
  *   al completar los 5 seg) el ESP32 reinicia con:
  *     - SSID AP:  Porton_Config
  *     - Pass AP:  porton1234
- *   (Los logs y controles aprendidos NO se borran.)
+ *     - WiFi de casa: borrado (vuelve a conectarse solo al AP)
+ *   (Los logs, controles y admins NO se borran.)
  *
  * CAMBIAR PASSWORD DEL AP:
  *   1. Conectate a la web del porton.
@@ -88,6 +89,23 @@ struct Session {
 };
 Session sessions[MAX_SESSIONS];
 
+// ---- cache de usuarios en RAM (evita leer flash en cada deteccion RF) ----
+struct UserEntry {
+  unsigned long code;
+  char          name[21];
+  bool          blocked;
+};
+#define MAX_USERS_CACHE 50
+UserEntry userCache[MAX_USERS_CACHE];
+int       userCacheCount = 0;
+
+// ---- cola FreeRTOS para envio de Telegram sin bloquear el loop ----
+struct TgMsg {
+  char event[24];
+  char message[220];
+};
+static QueueHandle_t tgQueue = nullptr;
+
 // ---------- forward decls ----------
 String currentTimestamp();
 bool   loadUsers(JsonDocument &doc);
@@ -98,6 +116,7 @@ void   loadApConfig(String &ssid, String &pass);
 void   saveApConfig(const String &ssid, const String &pass);
 bool   loadAdmins(JsonDocument &doc);
 bool   saveAdmins(JsonDocument &doc);
+void   rebuildUserCache();
 void   bootstrapFirstAdmin();
 String md5Hex(const String &input);
 String generateToken();
@@ -140,6 +159,21 @@ bool saveUsers(JsonDocument &doc) {
   serializeJson(doc, f);
   f.close();
   return true;
+}
+
+// Reconstruye el cache RAM de usuarios. Llamar tras cualquier saveUsers().
+void rebuildUserCache() {
+  userCacheCount = 0;
+  JsonDocument doc; loadUsers(doc);
+  for (JsonObject u : doc.as<JsonArray>()) {
+    if (userCacheCount >= MAX_USERS_CACHE) break;
+    userCache[userCacheCount].code    = u["code"].as<unsigned long>();
+    userCache[userCacheCount].blocked = u["blocked"] | false;
+    strncpy(userCache[userCacheCount].name, u["name"].as<String>().c_str(), 20);
+    userCache[userCacheCount].name[20] = '\0';
+    userCacheCount++;
+  }
+  Serial.printf("[CACHE] %d usuarios en RAM\n", userCacheCount);
 }
 
 bool loadAdmins(JsonDocument &doc) {
@@ -249,7 +283,8 @@ bool saveTelegramConfig(JsonDocument &doc) {
   return true;
 }
 
-void sendTelegram(const String &eventType, const String &message) {
+// Envia un mensaje Telegram (bloqueo real de red). Solo llamar desde telegramTask.
+static void _sendTelegramBlocking(const char *eventType, const char *message) {
   if (WiFi.status() != WL_CONNECTED) return;
   JsonDocument cfg; loadTelegramConfig(cfg);
   if (!(cfg["enabled"] | false)) return;
@@ -276,7 +311,26 @@ void sendTelegram(const String &eventType, const String &message) {
   unsigned long t = millis();
   while (client.available() == 0 && millis() - t < 4000) delay(10);
   client.stop();
-  Serial.println("[TG] mensaje enviado: " + message);
+  Serial.println("[TG] mensaje enviado: " + String(message));
+}
+
+// Tarea FreeRTOS (core 0): procesa la cola de mensajes Telegram sin bloquear el loop.
+static void telegramTask(void *pvParameters) {
+  TgMsg msg;
+  for (;;) {
+    if (xQueueReceive(tgQueue, &msg, portMAX_DELAY) == pdTRUE) {
+      _sendTelegramBlocking(msg.event, msg.message);
+    }
+  }
+}
+
+// Encola un mensaje Telegram (no bloquea). Si la cola esta llena se descarta.
+void sendTelegram(const String &eventType, const String &message) {
+  if (tgQueue == nullptr) return;
+  TgMsg msg;
+  strncpy(msg.event,   eventType.c_str(), sizeof(msg.event)   - 1); msg.event[sizeof(msg.event)-1]     = '\0';
+  strncpy(msg.message, message.c_str(),   sizeof(msg.message) - 1); msg.message[sizeof(msg.message)-1] = '\0';
+  xQueueSend(tgQueue, &msg, 0);   // no bloquear si la cola esta llena
 }
 
 // ================= RTC DS3231 =================
@@ -515,8 +569,9 @@ void setupWiFi() {
 
 // ================= FACTORY RESET (boton BOOT) =================
 void factoryResetAp() {
-  Serial.println("\n[RESET] borrando config AP... volviendo a defaults");
+  Serial.println("\n[RESET] borrando config AP y WiFi... volviendo a defaults");
   LittleFS.remove("/ap.json");
+  LittleFS.remove("/wifi.json");
   // feedback visual: 3 parpadeos rapidos
   for (int i = 0; i < 6; i++) {
     digitalWrite(LED_PIN, i % 2); delay(100);
@@ -1007,6 +1062,7 @@ void handleProvisionStart() {
   JsonObject nu = doc.as<JsonArray>().add<JsonObject>();
   nu["code"] = provisionCode; nu["name"] = provisionName; nu["blocked"] = false;
   saveUsers(doc);
+  rebuildUserCache();
 
   provisionEndMs    = millis() + PROVISION_DURATION_MS;
   provisionNextTxMs = millis();
@@ -1031,6 +1087,7 @@ void handleUserDelete() {
     if (arr[i]["code"].as<unsigned long>() == code) arr.remove(i);
   }
   saveUsers(doc);
+  rebuildUserCache();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1105,6 +1162,7 @@ void handleUserToggle() {
     }
   }
   saveUsers(doc);
+  rebuildUserCache();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1173,6 +1231,7 @@ void handleUserRename() {
   }
   if (!found) { server.send(404, "application/json", "{\"error\":\"control no encontrado\"}"); return; }
   saveUsers(doc);
+  rebuildUserCache();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1363,6 +1422,12 @@ void setup() {
   mySwitch.enableTransmit(RF_TX_PIN);
   Serial.println("[RF] escuchando 433MHz en GPIO " + String(RF_RX_PIN));
   Serial.println("[BTN] mantene BOOT por 5s para factory reset del AP");
+
+  rebuildUserCache();
+
+  tgQueue = xQueueCreate(5, sizeof(TgMsg));
+  xTaskCreatePinnedToCore(telegramTask, "TG", 8192, nullptr, 1, nullptr, 0);
+  Serial.println("[TG] tarea Telegram iniciada en core 0");
 }
 
 void loop() {
@@ -1427,20 +1492,20 @@ void loop() {
       if (learnCloneOf.length() > 0)
         Serial.printf("[CLON] codigo %lu ya existia como '%s'\n", code, oldName.c_str());
       saveUsers(doc);
+      rebuildUserCache();
       Serial.printf("[LEARN] %s -> %lu\n", learnName.c_str(), code);
       learnName = "";
       return;
     }
 
-    // buscar usuario y verificar si esta bloqueado
+    // buscar usuario en cache RAM (sin leer flash)
     String name = "";
     bool blocked = false;
     bool known = false;
-    JsonDocument usersDoc; loadUsers(usersDoc);
-    for (JsonObject u : usersDoc.as<JsonArray>()) {
-      if (u["code"].as<unsigned long>() == code) {
-        name    = u["name"].as<String>();
-        blocked = u["blocked"] | false;
+    for (int i = 0; i < userCacheCount; i++) {
+      if (userCache[i].code == code) {
+        name    = String(userCache[i].name);
+        blocked = userCache[i].blocked;
         known   = true;
         break;
       }
