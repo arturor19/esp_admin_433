@@ -30,6 +30,7 @@
 #include <WebServer.h>
 #include <LittleFS.h>
 #include <RCSwitch.h>
+#include <ELECHOUSE_CC1101_SRC_DRV.h>  // SmartRC-CC1101-Driver (LSatan) — instalar desde gestor de librerias
 #include <ArduinoJson.h>
 #include <time.h>
 #include "mbedtls/md5.h"  // ESP32 SDK — IntelliSense no lo ve, pero compila correctamente
@@ -38,7 +39,12 @@
 #include <RTClib.h>       // Adafruit RTClib — instalar desde gestor de librerias
 
 // =================== CONFIG ===================
-#define RF_RX_PIN          27               // pin DATA del receptor 433MHz
+// --- CC1101 SPI (SmartRC-CC1101-Driver) ---
+// MOSI=23, MISO=19, SCK=18 (SPI por defecto del ESP32)
+#define CC1101_CS_PIN      5                // SPI CSN / SS
+#define RF_RX_PIN          27               // GDO0 — pin de interrupcion RX
+#define RF_TX_PIN          32               // GDO2 — pin de transmision TX
+// ------------------------------------------
 #define RESET_BUTTON_PIN   0                // boton BOOT del ESP32 DevKit
 #define LED_PIN            2                // LED azul integrado
 #define RESET_HOLD_MS      5000             // 5 seg para factory reset
@@ -53,7 +59,6 @@
 #define MAX_ADMINS         10
 #define RELAY_PIN          26               // pin del relevador (cambiar segun tu cableado)
 #define RELAY_PULSE_MS     2000             // cuanto tiempo permanece activo (ms)
-#define RF_TX_PIN          25               // pin DATA del transmisor FS1000A
 #define PROVISION_DURATION_MS 15000         // 15 seg transmitiendo codigo nuevo
 // ==============================================
 
@@ -66,8 +71,11 @@ String        learnName = "";
 String        learnCloneOf = "";   // nombre previo si el codigo ya existia (posible clon)
 unsigned long provisionCode     = 0;
 String        provisionName     = "";
+unsigned int  provisionBits     = 24;  // bits del codigo a transmitir
 unsigned long provisionEndMs    = 0;
 unsigned long provisionNextTxMs = 0;
+bool          provisionTxReady  = false; // true cuando CC1101 ya esta en TX mode
+bool          pendingRfReset    = false; // reinit solicitado desde handler, ejecutar en loop()
 unsigned long lastCode = 0;
 unsigned long lastDetectionMs = 0;
 bool          timeOk = false;
@@ -94,6 +102,7 @@ struct UserEntry {
   unsigned long code;
   char          name[21];
   bool          blocked;
+  unsigned int  bits;   // bits capturados al aprender (0 = desconocido, usar 24)
 };
 #define MAX_USERS_CACHE 50
 UserEntry userCache[MAX_USERS_CACHE];
@@ -169,6 +178,7 @@ void rebuildUserCache() {
     if (userCacheCount >= MAX_USERS_CACHE) break;
     userCache[userCacheCount].code    = u["code"].as<unsigned long>();
     userCache[userCacheCount].blocked = u["blocked"] | false;
+    userCache[userCacheCount].bits    = u["bits"] | 24;
     strncpy(userCache[userCacheCount].name, u["name"].as<String>().c_str(), 20);
     userCache[userCacheCount].name[20] = '\0';
     userCacheCount++;
@@ -234,7 +244,7 @@ String findUserName(unsigned long code) {
   return "";
 }
 
-void addLog(const String &name, unsigned long code, bool blocked = false) {
+void addLog(const String &name, unsigned long code, bool blocked = false, unsigned int pulse = 0) {
   JsonDocument doc; loadLogs(doc);
   JsonArray arr = doc.as<JsonArray>();
   JsonObject entry = arr.add<JsonObject>();
@@ -242,6 +252,7 @@ void addLog(const String &name, unsigned long code, bool blocked = false) {
   entry["name"]    = name;
   entry["code"]    = code;
   if (blocked) entry["blocked"] = true;
+  if (pulse > 0) entry["pulse"] = pulse;
   while (arr.size() > MAX_LOGS) arr.remove(0);
   saveLogs(doc);
 }
@@ -702,6 +713,12 @@ button.blk{background:var(--warn);color:#1a1200}
   <div id="learnBox"></div>
   <div id="provBox" style="display:none;background:var(--warn);color:#1a1200;padding:12px;border-radius:8px;margin-bottom:10px;font-weight:600"></div>
   <div id="cloneBox" style="display:none;background:var(--err);color:#fff;padding:12px;border-radius:8px;margin-bottom:10px;font-weight:600"></div>
+  <div style="text-align:right;margin-bottom:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+    <button class="sec" style="width:auto;padding:6px 12px;font-size:12px" onclick="rebootDevice()">&#128260; Reiniciar dispositivo</button>
+    <a href="/users.csv" download="controles.csv" style="text-decoration:none"><button class="sec" style="width:auto;padding:6px 12px;font-size:12px">&#128229; Exportar Excel</button></a>
+    <button class="sec" style="width:auto;padding:6px 12px;font-size:12px" onclick="document.getElementById('csvImportInput').click()">&#128228; Importar CSV</button>
+    <input type="file" id="csvImportInput" accept=".csv,text/csv" style="display:none" onchange="importCsv(this)">
+  </div>
   <h2>Controles guardados</h2>
   <div class="card" id="users"></div>
   <h2>Aprender control nuevo</h2>
@@ -720,7 +737,7 @@ button.blk{background:var(--warn);color:#1a1200}
       <button onclick="startProvision()">Generar y transmitir</button>
       <button class="sec" onclick="cancelProvision()">Cancelar</button>
     </div>
-    <div class="hint">El porton genera un codigo unico y lo transmite 15 seg por el FS1000A. Pon el control en modo aprendizaje y apuntalo al porton.</div>
+    <div class="hint">El porton genera un codigo unico y lo transmite 15 seg por el CC1101. Pon el control en modo aprendizaje y apuntalo al porton. Si no grabo, usa el boton <b>Retransmitir 15s</b> que aparece en el aviso amarillo.</div>
   </div>
 </div>
 
@@ -827,17 +844,17 @@ async function loadLogs(){
   const r=await fetch('/api/logs');if(!chk(r))return;const j=await r.json();
   const el=document.getElementById('logs');
   if(!j.length){el.innerHTML='<div class="empty">Sin registros todavia</div>';return;}
-  el.innerHTML=j.slice().reverse().map(e=>`<div class="row"><div><div class="name">${e.name||'Desconocido'}${e.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${e.code}</div></div><div class="meta">${e.ts}</div></div>`).join('');
+  el.innerHTML=j.slice().reverse().map(e=>`<div class="row"><div><div class="name">${e.name||'Desconocido'}${e.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${e.code}${e.pulse?' &bull; pulse <b>'+e.pulse+'µs</b>':''}</div></div><div class="meta">${e.ts}</div></div>`).join('');
 }
 async function loadUsers(){
   const r=await fetch('/api/users');if(!chk(r))return;const j=await r.json();
   const el=document.getElementById('users');
   if(!j.users.length)el.innerHTML='<div class="empty">Todavia no hay controles aprendidos</div>';
-  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}</div></div><div style="display:flex;gap:6px"><button class="sec" style="width:auto;padding:6px 10px" onclick="renameUser(${u.code},'${u.name.replace(/'/g,"\\'")}')">Renombrar</button><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
+  else el.innerHTML=j.users.map(u=>`<div class="row"><div><div class="name">${u.name}${u.blocked?' <span class="tag red">BLOQUEADO</span>':''}</div><div class="meta">codigo ${u.code}${u.bits?' &bull; '+u.bits+'bits':''}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="sec" style="width:auto;padding:6px 10px" onclick="transmitUser(${u.code},'${u.name.replace(/'/g,"\\'")}')">&#128225; Transmitir</button><button class="sec" style="width:auto;padding:6px 10px" onclick="renameUser(${u.code},'${u.name.replace(/'/g,"\\'")}')">Renombrar</button><button class="${u.blocked?'':'blk'}" style="width:auto;padding:6px 10px" onclick="toggleUser(${u.code})">${u.blocked?'Habilitar':'Bloquear'}</button><button class="warn" style="width:auto;padding:6px 10px" onclick="delUser(${u.code})">Borrar</button></div></div>`).join('');
   const lb=document.getElementById('learnBox');
   lb.innerHTML=j.learning?`<div class="learning">Esperando boton del control para "${j.learning}"...</div>`:'';
   const pb=document.getElementById('provBox');
-  if(j.provisioning){pb.textContent='Transmitiendo codigo '+j.provisionCode+' para "'+j.provisioning+'"... Pon el control en modo aprendizaje.';pb.style.display='';}
+  if(j.provisioning){pb.innerHTML='&#128225; Transmitiendo codigo <b>'+j.provisionCode+'</b> para "'+j.provisioning+'"&hellip; Pon el control en modo aprendizaje.<br><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button onclick="retransmitProvision()" style="padding:4px 10px;font-size:12px;background:#1a1200;color:#fbbf24;border:1px solid #fbbf24;border-radius:6px;cursor:pointer;font-weight:600">&#128257; Retransmitir 15s</button><button onclick="stopTransmit()" style="padding:4px 10px;font-size:12px;background:#1a1200;color:#f87171;border:1px solid #f87171;border-radius:6px;cursor:pointer;font-weight:600">&#9209; Detener</button></div>';pb.style.display='';}
   else pb.style.display='none';
   if(j.learning||j.provisioning)setTimeout(loadUsers,1500);
   const cb=document.getElementById('cloneBox');
@@ -866,6 +883,32 @@ async function startProvision(){
   document.getElementById('provName').value='';loadUsers();
 }
 async function cancelProvision(){await fetch('/api/provision/cancel');loadUsers();}
+async function stopTransmit(){
+  await fetch('/api/provision/cancel');
+  loadUsers();
+  alert('Transmision detenida. El receptor RF fue restaurado.');
+}
+async function retransmitProvision(){await fetch('/api/provision/retransmit');loadUsers();}
+async function rfReset(){await fetch('/api/rf/reset');loadUsers();alert('Receptor RF reiniciado.');}
+async function rebootDevice(){
+  if(!confirm('Reiniciar el dispositivo?'))return;
+  await fetch('/api/reboot');
+  alert('Reiniciando... Reconectate en unos segundos.');
+}
+async function transmitUser(code,name){
+  if(!confirm('Transmitir codigo de "'+name+'" por 15 segundos?'))return;
+  await fetch('/api/users/transmit?code='+code);
+  loadUsers();
+}
+async function importCsv(input){
+  const file=input.files[0]; if(!file)return;
+  const text=await file.text();
+  const r=await fetch('/api/users/import',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});
+  const j=await r.json();
+  input.value='';
+  alert('Importacion lista:\n+'+j.added+' nuevos\n'+j.updated+' actualizados\n'+j.skipped+' omitidos');
+  loadUsers();
+}
 async function delUser(code){if(!confirm('Borrar este control?'))return;await fetch('/api/users/delete?code='+code);loadUsers();}
 async function clearLogs(){if(!confirm('Borrar TODOS los registros?'))return;await fetch('/api/logs/clear');loadLogs();}
 async function saveWifi(){
@@ -972,6 +1015,7 @@ loadStatus();loadLogs();setInterval(loadLogs,5000);
 )rawliteral";
 
 // ================= HANDLERS =================
+void reinitRfReceiver(); // forward declaration
 void handleRoot() {
   if (!requireAuth()) return;
   server.send_P(200, "text/html", INDEX_HTML);
@@ -1057,6 +1101,7 @@ void handleProvisionStart() {
   learnName = "";  // cancelar aprendizaje si estaba activo
   provisionName = server.arg("name");
   do { provisionCode = esp_random() & 0x00FFFFFFUL; } while (provisionCode == 0);
+  provisionBits = 24;  // codigo generado: siempre 24 bits
 
   JsonDocument doc; loadUsers(doc);
   JsonObject nu = doc.as<JsonArray>().add<JsonObject>();
@@ -1072,8 +1117,168 @@ void handleProvisionStart() {
 
 void handleProvisionCancel() {
   if (!requireAuth()) return;
-  provisionName = "";
-  provisionCode = 0;
+  provisionName    = "";
+  provisionCode    = 0;
+  pendingRfReset   = true;  // el loop() hara el reinit en su propio contexto
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// Transmite un codigo YA registrado (para clonar a otro control fisico)
+void handleTransmitUser() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("code")) { server.send(400, "application/json", "{\"error\":\"code requerido\"}"); return; }
+  unsigned long reqCode = strtoul(server.arg("code").c_str(), nullptr, 10);
+  // buscar en cache
+  String foundName = "";
+  unsigned int foundBits = 24;
+  for (int i = 0; i < userCacheCount; i++) {
+    if (userCache[i].code == reqCode) {
+      foundName = String(userCache[i].name);
+      foundBits = userCache[i].bits > 0 ? userCache[i].bits : 24;
+      break;
+    }
+  }
+  if (foundName.length() == 0) { server.send(404, "application/json", "{\"error\":\"usuario no encontrado\"}"); return; }
+  learnName     = "";  // cancelar aprendizaje si estaba activo
+  provisionName = foundName;
+  provisionCode = reqCode;
+  provisionBits = foundBits;
+  provisionEndMs    = millis() + PROVISION_DURATION_MS;
+  provisionNextTxMs = millis();
+  Serial.printf("[TX] retransmitiendo '%s' -> %lu (%u bits)\n", foundName.c_str(), reqCode, foundBits);
+  // guardar bits en variable global para el loop
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// Exporta los controles registrados como CSV (compatible con Excel)
+void handleUsersExport() {
+  if (!requireAuth()) return;
+  JsonDocument doc; loadUsers(doc);
+  JsonArray arr = doc.as<JsonArray>();
+  String csv = "nombre,codigo,bloqueado,bits\r\n";
+  for (JsonObject u : arr) {
+    String nombre = u["name"].as<String>();
+    nombre.replace("\"", "\"\"");  // escapar comillas dobles
+    csv += "\"" + nombre + "\",";
+    csv += String(u["code"].as<unsigned long>()) + ",";
+    csv += (u["blocked"] | false) ? "si" : "no";
+    csv += "," + String(u["bits"] | 24) + "\r\n";
+  }
+  server.sendHeader("Content-Disposition", "attachment; filename=\"controles.csv\"");
+  server.send(200, "text/csv; charset=utf-8", csv);
+}
+
+// Importa controles desde un CSV subido por el usuario
+// Formato esperado: nombre,codigo,bloqueado,bits (con o sin cabecera)
+void handleUsersImport() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"body vacio\"}"); return; }
+  String body = server.arg("plain");
+  JsonDocument doc; loadUsers(doc);
+  JsonArray arr = doc.as<JsonArray>();
+  int added = 0, updated = 0, skipped = 0;
+  int lineStart = 0;
+  bool firstLine = true;
+  while (lineStart < (int)body.length()) {
+    int lineEnd = body.indexOf('\n', lineStart);
+    if (lineEnd < 0) lineEnd = body.length();
+    String line = body.substring(lineStart, lineEnd);
+    line.trim();
+    lineStart = lineEnd + 1;
+    if (line.length() == 0) continue;
+    // saltar cabecera si empieza con letra
+    if (firstLine) {
+      firstLine = false;
+      if (!isDigit(line.charAt(0)) && line.charAt(0) != '"') continue;
+    }
+    // parsear campos separados por coma respetando comillas
+    String fields[4]; int fi = 0;
+    bool inQ = false; String cur = "";
+    for (int i = 0; i <= (int)line.length() && fi < 4; i++) {
+      char c = i < (int)line.length() ? line.charAt(i) : ',';
+      if (c == '"') { inQ = !inQ; continue; }
+      if (c == ',' && !inQ) { fields[fi++] = cur; cur = ""; }
+      else cur += c;
+    }
+    if (fi < 2) { skipped++; continue; }  // minimo nombre y codigo
+    String nombre = fields[0]; nombre.trim();
+    unsigned long codigo = strtoul(fields[1].c_str(), nullptr, 10);
+    bool bloqueado = (fields[2] == "si" || fields[2] == "1" || fields[2] == "true");
+    unsigned int bits = fields[3].length() > 0 ? (unsigned int)fields[3].toInt() : 24;
+    if (codigo == 0 || nombre.length() == 0 || nombre.length() > 20) { skipped++; continue; }
+    // buscar si ya existe
+    bool found = false;
+    for (JsonObject u : arr) {
+      if (u["code"].as<unsigned long>() == codigo) {
+        u["name"]    = nombre;
+        u["blocked"] = bloqueado;
+        u["bits"]    = bits;
+        found = true; updated++; break;
+      }
+    }
+    if (!found) {
+      JsonObject nu = arr.add<JsonObject>();
+      nu["code"] = codigo; nu["name"] = nombre; nu["blocked"] = bloqueado; nu["bits"] = bits;
+      added++;
+    }
+  }
+  saveUsers(doc);
+  rebuildUserCache();
+  Serial.printf("[IMPORT] +%d nuevos, %d actualizados, %d omitidos\n", added, updated, skipped);
+  String resp = "{\"ok\":true,\"added\":" + String(added) + ",\"updated\":" + String(updated) + ",\"skipped\":" + String(skipped) + "}";
+  server.send(200, "application/json", resp);
+}
+
+// Reinicia completamente el CC1101 y habilita el receptor RF
+void reinitRfReceiver() {
+  mySwitch.disableReceive();
+  mySwitch.disableTransmit();
+  pinMode(RF_RX_PIN, INPUT);  // CRITICO: disableTransmit() deja el pin como OUTPUT
+  provisionTxReady = false;
+  // Init() envia SRES internamente — reset completo del chip desde cualquier estado
+  ELECHOUSE_cc1101.Init();
+  ELECHOUSE_cc1101.setMHZ(433.92);
+  ELECHOUSE_cc1101.setModulation(2); // OOK/ASK
+  ELECHOUSE_cc1101.setPA(10);
+  ELECHOUSE_cc1101.SetRx();
+  delay(100);
+  mySwitch.resetAvailable();
+  lastCode        = 0;
+  lastDetectionMs = 0;
+  mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+  Serial.println("[RF] CC1101 reiniciado y en RX");
+}
+
+// Detiene cualquier transmision y reinicia el receptor RF
+void handleRfReset() {
+  if (!requireAuth()) return;
+  provisionName  = "";
+  provisionCode  = 0;
+  learnName      = "";
+  pendingRfReset = true;  // el loop() hara el reinit
+  Serial.println("[RF] reset solicitado");
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleReboot() {
+  if (!requireAuth()) return;
+  mySwitch.disableReceive();
+  mySwitch.disableTransmit();
+  pinMode(RF_RX_PIN, INPUT);
+  server.send(200, "application/json", "{\"ok\":true}");
+  delay(200);
+  ESP.restart();
+}
+
+void handleProvisionRetransmit() {
+  if (!requireAuth()) return;
+  if (provisionName.length() == 0 || provisionCode == 0) {
+    server.send(400, "application/json", "{\"error\":\"no hay provision activa\"}"); return;
+  }
+  // reinicia el timer sin cambiar el codigo — el control puede intentar grabarlo de nuevo
+  provisionEndMs    = millis() + PROVISION_DURATION_MS;
+  provisionNextTxMs = millis();
+  Serial.printf("[PROVISION] retransmitiendo %s -> %lu\n", provisionName.c_str(), provisionCode);
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1370,8 +1575,14 @@ void setupWebServer() {
   server.on("/api/users/rename",  HTTP_POST, handleUserRename);
   server.on("/api/learn/start",        handleLearnStart);
   server.on("/api/learn/cancel",       handleLearnCancel);
-  server.on("/api/provision/start",    handleProvisionStart);
-  server.on("/api/provision/cancel",   handleProvisionCancel);
+  server.on("/api/provision/start",       handleProvisionStart);
+  server.on("/api/provision/cancel",      handleProvisionCancel);
+  server.on("/api/provision/retransmit",  handleProvisionRetransmit);
+  server.on("/api/rf/reset",              handleRfReset);
+  server.on("/api/reboot",                handleReboot);
+  server.on("/api/users/transmit",        handleTransmitUser);
+  server.on("/users.csv",           HTTP_GET,  handleUsersExport);
+  server.on("/api/users/import",    HTTP_POST, handleUsersImport);
   server.on("/api/wifi",   HTTP_POST,  handleWifiSet);
   server.on("/api/ap",     HTTP_POST,  handleApSet);
   server.on("/api/admin/users",                      handleAdminUsers);
@@ -1418,9 +1629,18 @@ void setup() {
   setupWiFi();
   setupWebServer();
 
+  // Inicializar CC1101
+  ELECHOUSE_cc1101.setSpiPin(18, 19, 23, CC1101_CS_PIN);  // SCK, MISO, MOSI, CSN
+  ELECHOUSE_cc1101.Init();
+  ELECHOUSE_cc1101.setMHZ(433.92);   // frecuencia 433.92 MHz
+  ELECHOUSE_cc1101.setModulation(2); // OOK/ASK — igual que controles 433MHz (default es 2-FSK, NO sirve)
+  ELECHOUSE_cc1101.setPA(10);        // potencia maxima TX (+10 dBm) para que clonadores puedan capturar
+  ELECHOUSE_cc1101.SetRx();          // modo recepcion
   mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
-  mySwitch.enableTransmit(RF_TX_PIN);
-  Serial.println("[RF] escuchando 433MHz en GPIO " + String(RF_RX_PIN));
+  // NO llamar enableTransmit en setup: se llama por burst usando GDO0 (RF_RX_PIN)
+  mySwitch.setRepeatTransmit(20);    // 20 repeticiones por burst (default=10)
+  mySwitch.setPulseLength(339);      // 339µs — medido del control original (codigo 753832)
+  Serial.println("[RF] CC1101 listo — OOK 433.92 MHz (GDO0=GPIO" + String(RF_RX_PIN) + ", GDO2=GPIO" + String(RF_TX_PIN) + ")");
   Serial.println("[BTN] mantene BOOT por 5s para factory reset del AP");
 
   rebuildUserCache();
@@ -1446,30 +1666,48 @@ void loop() {
     cleanExpiredSessions();
   }
 
+  // reinicio del receptor RF solicitado por handler (detener TX, reset manual)
+  if (pendingRfReset) {
+    pendingRfReset = false;
+    reinitRfReceiver();
+    return;
+  }
+
   // transmision de codigo de provisionamiento
   if (provisionName.length() > 0) {
     if (millis() >= provisionEndMs) {
       Serial.printf("[PROVISION] fin para %s\n", provisionName.c_str());
       provisionName = "";
       provisionCode = 0;
+      reinitRfReceiver();
+      Serial.println("[RF] receptor restaurado tras provision");
     } else if (millis() >= provisionNextTxMs) {
-      provisionNextTxMs = millis() + 1000;
-      mySwitch.disableReceive();
-      mySwitch.send(provisionCode, 24);
-      mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+      provisionNextTxMs = millis() + 200;
+      // Primera vez: entrar en TX mode una sola vez y quedarse ahi
+      if (!provisionTxReady) {
+        mySwitch.disableReceive();
+        ELECHOUSE_cc1101.SetTx();
+        ELECHOUSE_cc1101.setPA(10);
+        provisionTxReady = true;
+      }
+      // Transmitir sin ciclar TX/RX — el chip queda en TX entre bursts
+      mySwitch.enableTransmit(RF_RX_PIN);
+      mySwitch.send(provisionCode, provisionBits);
+      mySwitch.disableTransmit(); // GPIO27 queda LOW (carrier off entre bursts)
     }
   }
 
   if (mySwitch.available()) {
-    unsigned long code = mySwitch.getReceivedValue();
-    unsigned int  bits = mySwitch.getReceivedBitlength();
+    unsigned long code  = mySwitch.getReceivedValue();
+    unsigned int  bits  = mySwitch.getReceivedBitlength();
+    unsigned int  pulse = mySwitch.getReceivedDelay();
     mySwitch.resetAvailable();
 
     if (code == 0) return;
     if (code == lastCode && (millis() - lastDetectionMs) < COOLDOWN_MS) return;
     lastCode = code; lastDetectionMs = millis();
 
-    Serial.printf("[RF] codigo=%lu bits=%u\n", code, bits);
+    Serial.printf("[RF] codigo=%lu bits=%u pulse=%uµs\n", code, bits, pulse);
 
     if (learnName.length() > 0) {
       JsonDocument doc; loadUsers(doc);
@@ -1486,7 +1724,12 @@ void loop() {
       }
       if (!existed) {
         JsonObject nu = arr.add<JsonObject>();
-        nu["code"] = code; nu["name"] = learnName; nu["blocked"] = false;
+        nu["code"] = code; nu["name"] = learnName; nu["blocked"] = false; nu["bits"] = bits;
+      } else {
+        // actualizar bits aunque el codigo ya existiera
+        for (JsonObject u : arr) {
+          if (u["code"].as<unsigned long>() == code) { u["bits"] = bits; break; }
+        }
       }
       learnCloneOf = (existed && oldName != learnName) ? oldName : "";
       if (learnCloneOf.length() > 0)
@@ -1524,7 +1767,7 @@ void loop() {
       sendTelegram("notifyUnknown", "Desconocido: codigo " + String(code) + " - " + currentTimestamp());
     }
 
-    addLog(name, code, blocked && known);
-    Serial.printf("[LOG] %s (codigo %lu)%s\n", name.c_str(), code, blocked ? " [BLOQUEADO]" : "");
+    addLog(name, code, blocked && known, pulse);
+    Serial.printf("[LOG] %s (codigo %lu, pulse=%uµs)%s\n", name.c_str(), code, pulse, blocked ? " [BLOQUEADO]" : "");
   }
 }

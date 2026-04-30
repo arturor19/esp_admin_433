@@ -1,84 +1,99 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 710" width="820" height="710" style="font-family:monospace,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 760" width="860" height="760" style="font-family:monospace,sans-serif">
 
   <!-- Fondo -->
-  <rect width="820" height="710" fill="#0f1115"/>
+  <rect width="860" height="760" fill="#0f1115"/>
 
   <!-- Título -->
-  <text x="410" y="28" fill="#4ade80" font-size="15" text-anchor="middle" font-weight="bold">Portón 433MHz — Diagrama de conexiones</text>
+  <text x="430" y="28" fill="#4ade80" font-size="15" text-anchor="middle" font-weight="bold">Portón 433MHz — Diagrama de conexiones (CC1101)</text>
 
   <!-- ═══ BUS 5V ═══ -->
-  <line x1="8" y1="50" x2="760" y2="50" stroke="#e74c3c" stroke-width="2.5"/>
-  <text x="765" y="55" fill="#e74c3c" font-size="11" font-weight="bold">5V</text>
+  <line x1="8" y1="50" x2="800" y2="50" stroke="#e74c3c" stroke-width="2.5"/>
+  <text x="806" y="55" fill="#e74c3c" font-size="11" font-weight="bold">5V</text>
 
   <!-- ═══ BUS 3.3V ═══ -->
-  <line x1="8" y1="75" x2="760" y2="75" stroke="#f97316" stroke-width="2.5"/>
-  <text x="765" y="80" fill="#f97316" font-size="11" font-weight="bold">3V3</text>
+  <line x1="8" y1="75" x2="800" y2="75" stroke="#f97316" stroke-width="2.5"/>
+  <text x="806" y="80" fill="#f97316" font-size="11" font-weight="bold">3V3</text>
 
   <!-- ═══ BUS GND ═══ -->
-  <line x1="8" y1="670" x2="760" y2="670" stroke="#777" stroke-width="2.5"/>
-  <text x="765" y="675" fill="#777" font-size="11" font-weight="bold">GND</text>
+  <line x1="8" y1="720" x2="800" y2="720" stroke="#777" stroke-width="2.5"/>
+  <text x="806" y="725" fill="#777" font-size="11" font-weight="bold">GND</text>
 
   <!-- ════════════ FUENTE 5V ════════════ -->
   <rect x="25" y="35" width="90" height="36" rx="5" fill="#1a1d24" stroke="#e74c3c" stroke-width="1.5"/>
   <text x="70" y="49" fill="#e6e6e6" font-size="9" text-anchor="middle">Fuente</text>
   <text x="70" y="62" fill="#e74c3c" font-size="9" text-anchor="middle">5V / 1A</text>
 
-  <!-- ════════════ MX-RM-5V ════════════ -->
-  <rect x="25" y="130" width="130" height="115" rx="6" fill="#1e2430" stroke="#fbbf24" stroke-width="1.8"/>
-  <text x="90" y="150" fill="#fbbf24" font-size="11" text-anchor="middle" font-weight="bold">MX-RM-5V</text>
-  <text x="90" y="163" fill="#888" font-size="8" text-anchor="middle">Receptor 433MHz</text>
-  <text x="118" y="184" fill="#888" font-size="9">ANT</text>
-  <text x="118" y="202" fill="#e74c3c" font-size="9">VCC</text>
-  <line x1="155" y1="198" x2="175" y2="198" stroke="#e74c3c" stroke-width="1.8"/>
-  <text x="118" y="220" fill="#777" font-size="9">GND</text>
-  <line x1="155" y1="216" x2="175" y2="216" stroke="#777" stroke-width="1.8"/>
-  <text x="118" y="238" fill="#4ade80" font-size="9">DATA</text>
-  <line x1="155" y1="234" x2="200" y2="234" stroke="#4ade80" stroke-width="1.8"/>
-  <!-- Antena -->
-  <line x1="25" y1="180" x2="10" y2="133" stroke="#888" stroke-width="1" stroke-dasharray="3,2"/>
-  <text x="1" y="129" fill="#555" font-size="8">17cm</text>
-  <!-- MX VCC → 5V bus -->
-  <polyline points="175,198 175,50" fill="none" stroke="#e74c3c" stroke-width="1.8"/>
-  <circle cx="175" cy="50" r="3.5" fill="#e74c3c"/>
-  <!-- MX GND → GND bus -->
-  <polyline points="175,216 175,670" fill="none" stroke="#777" stroke-width="1.8"/>
-  <circle cx="175" cy="670" r="3.5" fill="#777"/>
+  <!-- ════════════ CC1101 ════════════ -->
+  <rect x="25" y="120" width="160" height="230" rx="6" fill="#1e2430" stroke="#fbbf24" stroke-width="1.8"/>
+  <text x="105" y="142" fill="#fbbf24" font-size="12" text-anchor="middle" font-weight="bold">CC1101</text>
+  <text x="105" y="156" fill="#888" font-size="8" text-anchor="middle">Transceptor 433MHz (SPI)</text>
+
+  <text x="115" y="182" font-size="9"><tspan fill="#555">2</tspan><tspan fill="#e74c3c"> VCC</tspan></text>
+  <line x1="185" y1="178" x2="205" y2="178" stroke="#e74c3c" stroke-width="1.8"/>
+  <text x="115" y="202" font-size="9"><tspan fill="#555">1</tspan><tspan fill="#8d6748"> GND</tspan></text>
+  <line x1="185" y1="198" x2="205" y2="198" stroke="#8d6748" stroke-width="1.8"/>
+  <text x="115" y="222" font-size="9"><tspan fill="#555">6</tspan><tspan fill="#60a5fa"> MOSI(23)</tspan></text>
+  <line x1="185" y1="218" x2="205" y2="218" stroke="#60a5fa" stroke-width="1.8"/>
+  <text x="115" y="242" font-size="9"><tspan fill="#555">7</tspan><tspan fill="#e0e0e0"> MISO(19)</tspan></text>
+  <line x1="185" y1="238" x2="205" y2="238" stroke="#e0e0e0" stroke-width="1.8"/>
+  <text x="115" y="262" font-size="9"><tspan fill="#555">5</tspan><tspan fill="#4ade80"> SCK (18)</tspan></text>
+  <line x1="185" y1="258" x2="205" y2="258" stroke="#4ade80" stroke-width="1.8"/>
+  <text x="115" y="282" font-size="9"><tspan fill="#555">4</tspan><tspan fill="#fbbf24"> CSN (5)</tspan></text>
+  <line x1="185" y1="278" x2="205" y2="278" stroke="#fbbf24" stroke-width="1.8"/>
+  <text x="115" y="302" font-size="9"><tspan fill="#555">3</tspan><tspan fill="#fb923c"> GDO0(27)RX</tspan></text>
+  <line x1="185" y1="298" x2="205" y2="298" stroke="#fb923c" stroke-width="1.8"/>
+  <text x="115" y="322" font-size="9"><tspan fill="#555">8</tspan><tspan fill="#94a3b8"> GDO2(32)TX</tspan></text>
+  <line x1="185" y1="318" x2="205" y2="318" stroke="#94a3b8" stroke-width="1.8"/>
+
+  <!-- Antena CC1101 -->
+  <text x="30" y="352" fill="#888" font-size="9">ANT</text>
+  <line x1="25" y1="165" x2="10" y2="120" stroke="#888" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="1" y="116" fill="#555" font-size="8">17cm</text>
+
+  <!-- CC1101 VCC → 3.3V bus (cable rojo) -->
+  <polyline points="205,178 215,178 215,75" fill="none" stroke="#e74c3c" stroke-width="1.8"/>
+  <circle cx="215" cy="75" r="3.5" fill="#f97316"/>
+  <!-- CC1101 GND → GND bus (cable café) -->
+  <polyline points="205,198 220,198 220,720" fill="none" stroke="#8d6748" stroke-width="1.8"/>
+  <circle cx="220" cy="720" r="3.5" fill="#777"/>
+
+  <!-- SPI: MOSI 23 (azul) -->
+  <polyline points="205,218 240,218 240,355 310,355" fill="none" stroke="#60a5fa" stroke-width="1.5"/>
+  <!-- SPI: MISO 19 (blanco, dashed) -->
+  <polyline points="205,238 245,238 245,373 310,373" fill="none" stroke="#e0e0e0" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <!-- SPI: SCK 18 (verde) -->
+  <polyline points="205,258 250,258 250,391 310,391" fill="none" stroke="#4ade80" stroke-width="1.5"/>
+  <!-- SPI: CSN 5 (amarillo, dashed) -->
+  <polyline points="205,278 255,278 255,409 310,409" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <!-- GDO0 → GPIO27 (naranja) -->
+  <polyline points="205,298 260,298 260,240 310,240" fill="none" stroke="#fb923c" stroke-width="1.8"/>
+  <!-- GDO2 → GPIO32 (gris) -->
+  <polyline points="205,318 265,318 265,302 310,302" fill="none" stroke="#94a3b8" stroke-width="1.8"/>
 
   <!-- ════════════ DS3231 ════════════ -->
-  <rect x="25" y="288" width="150" height="130" rx="6" fill="#1e2430" stroke="#a855f7" stroke-width="1.8"/>
-  <text x="100" y="309" fill="#a855f7" font-size="11" text-anchor="middle" font-weight="bold">DS3231</text>
-  <text x="100" y="322" fill="#888" font-size="8" text-anchor="middle">Reloj RTC (opcional)</text>
-  <text x="32" y="348" fill="#f97316" font-size="9">VCC 3.3V</text>
-  <line x1="25" y1="344" x2="15" y2="344" stroke="#f97316" stroke-width="1.8"/>
-  <text x="32" y="372" fill="#777" font-size="9">GND</text>
-  <line x1="25" y1="368" x2="8" y2="368" stroke="#777" stroke-width="1.8"/>
-  <text x="128" y="397" fill="#a855f7" font-size="9">SDA</text>
-  <line x1="175" y1="393" x2="310" y2="393" stroke="#a855f7" stroke-width="1.8"/>
-  <text x="128" y="415" fill="#a855f7" font-size="9">SCL</text>
-  <line x1="175" y1="411" x2="310" y2="411" stroke="#a855f7" stroke-width="1.8" stroke-dasharray="6,3"/>
+  <rect x="25" y="390" width="150" height="130" rx="6" fill="#1e2430" stroke="#a855f7" stroke-width="1.8"/>
+  <text x="100" y="411" fill="#a855f7" font-size="11" text-anchor="middle" font-weight="bold">DS3231</text>
+  <text x="100" y="424" fill="#888" font-size="8" text-anchor="middle">Reloj RTC (opcional)</text>
+  <text x="32" y="450" fill="#f97316" font-size="9">VCC 3.3V</text>
+  <line x1="25" y1="446" x2="15" y2="446" stroke="#f97316" stroke-width="1.8"/>
+  <text x="32" y="474" fill="#777" font-size="9">GND</text>
+  <line x1="25" y1="470" x2="8" y2="470" stroke="#777" stroke-width="1.8"/>
+  <text x="128" y="499" fill="#a855f7" font-size="9">SDA</text>
+  <line x1="175" y1="495" x2="310" y2="495" stroke="#a855f7" stroke-width="1.8"/>
+  <text x="128" y="517" fill="#a855f7" font-size="9">SCL</text>
+  <line x1="175" y1="513" x2="310" y2="513" stroke="#a855f7" stroke-width="1.8" stroke-dasharray="6,3"/>
   <!-- DS3231 VCC → 3.3V bus -->
-  <polyline points="15,344 15,75" fill="none" stroke="#f97316" stroke-width="1.8"/>
+  <polyline points="15,446 15,75" fill="none" stroke="#f97316" stroke-width="1.8"/>
   <circle cx="15" cy="75" r="3.5" fill="#f97316"/>
   <!-- DS3231 GND → GND bus -->
-  <polyline points="8,368 8,670" fill="none" stroke="#777" stroke-width="1.8"/>
-  <circle cx="8" cy="670" r="3.5" fill="#777"/>
-
-  <!-- ════════════ DIVISOR DE TENSIÓN ════════════ -->
-  <rect x="200" y="225" width="56" height="17" rx="4" fill="#4a3000" stroke="#c8961e" stroke-width="1.2"/>
-  <text x="228" y="237" fill="#fbbf24" font-size="8" text-anchor="middle">R1 10kΩ</text>
-  <line x1="256" y1="234" x2="278" y2="234" stroke="#4ade80" stroke-width="1.8"/>
-  <circle cx="278" cy="234" r="4.5" fill="#4ade80"/>
-  <line x1="278" y1="234" x2="310" y2="234" stroke="#4ade80" stroke-width="1.8"/>
-  <line x1="278" y1="234" x2="278" y2="253" stroke="#4ade80" stroke-width="1.8"/>
-  <rect x="269" y="253" width="17" height="58" rx="4" fill="#4a3000" stroke="#c8961e" stroke-width="1.2"/>
-  <text x="278" y="287" fill="#fbbf24" font-size="8" text-anchor="middle" writing-mode="tb">R2 10kΩ</text>
-  <line x1="278" y1="311" x2="278" y2="670" stroke="#777" stroke-width="1.8"/>
-  <circle cx="278" cy="670" r="3.5" fill="#777"/>
+  <polyline points="8,470 8,720" fill="none" stroke="#777" stroke-width="1.8"/>
+  <circle cx="8" cy="720" r="3.5" fill="#777"/>
 
   <!-- ════════════ ESP32 ════════════ -->
-  <rect x="310" y="90" width="165" height="450" rx="8" fill="#1e2430" stroke="#4ade80" stroke-width="2"/>
-  <text x="392" y="113" fill="#4ade80" font-size="13" text-anchor="middle" font-weight="bold">ESP32</text>
-  <text x="392" y="128" fill="#888" font-size="9" text-anchor="middle">WROOM DevKit</text>
+  <rect x="310" y="90" width="170" height="510" rx="8" fill="#1e2430" stroke="#4ade80" stroke-width="2"/>
+  <text x="395" y="113" fill="#4ade80" font-size="13" text-anchor="middle" font-weight="bold">ESP32</text>
+  <text x="395" y="128" fill="#888" font-size="9" text-anchor="middle">WROOM DevKit</text>
+
   <!-- Pines izquierda -->
   <text x="316" y="161" fill="#e74c3c" font-size="9">VIN</text>
   <line x1="290" y1="157" x2="310" y2="157" stroke="#e74c3c" stroke-width="1.8"/>
@@ -86,16 +101,21 @@
   <line x1="283" y1="179" x2="310" y2="179" stroke="#f97316" stroke-width="1.8"/>
   <text x="316" y="205" fill="#777" font-size="9">GND</text>
   <line x1="297" y1="201" x2="310" y2="201" stroke="#777" stroke-width="1.8"/>
-  <text x="316" y="238" fill="#4ade80" font-size="9">GPIO27</text>
-  <text x="316" y="263" fill="#777" font-size="9">GPIO2  ● LED</text>
+  <text x="316" y="243" fill="#fb923c" font-size="9">GPIO27 GDO0-RX</text>
+  <text x="316" y="265" fill="#777" font-size="9">GPIO2  ● LED</text>
   <text x="316" y="283" fill="#777" font-size="9">GPIO0  ● BOOT</text>
-  <text x="316" y="397" fill="#a855f7" font-size="9">GPIO21 SDA</text>
-  <text x="316" y="415" fill="#a855f7" font-size="9">GPIO22 SCL</text>
+  <text x="316" y="305" fill="#94a3b8" font-size="9">GPIO32 GDO2-TX</text>
+  <text x="316" y="358" fill="#60a5fa" font-size="9">GPIO23 MOSI</text>
+  <text x="316" y="376" fill="#e0e0e0" font-size="9">GPIO19 MISO</text>
+  <text x="316" y="394" fill="#4ade80" font-size="9">GPIO18 SCK</text>
+  <text x="316" y="412" fill="#fbbf24" font-size="9">GPIO5  CSN</text>
+  <text x="316" y="498" fill="#a855f7" font-size="9">GPIO21 SDA</text>
+  <text x="316" y="516" fill="#a855f7" font-size="9">GPIO22 SCL</text>
+
   <!-- Pines derecha -->
-  <text x="386" y="335" fill="#3b82f6" font-size="9">GPIO26</text>
-  <line x1="475" y1="331" x2="530" y2="331" stroke="#3b82f6" stroke-width="1.8"/>
-  <text x="386" y="403" fill="#14b8a6" font-size="9">GPIO25</text>
-  <line x1="475" y1="399" x2="530" y2="399" stroke="#14b8a6" stroke-width="1.8"/>
+  <text x="390" y="430" fill="#3b82f6" font-size="9">GPIO26</text>
+  <line x1="480" y1="426" x2="540" y2="426" stroke="#3b82f6" stroke-width="1.8"/>
+
   <!-- VIN → 5V bus -->
   <polyline points="290,157 290,50" fill="none" stroke="#e74c3c" stroke-width="1.8"/>
   <circle cx="290" cy="50" r="3.5" fill="#e74c3c"/>
@@ -103,72 +123,63 @@
   <polyline points="283,179 283,75" fill="none" stroke="#f97316" stroke-width="1.8"/>
   <circle cx="283" cy="75" r="3.5" fill="#f97316"/>
   <!-- GND → GND bus -->
-  <polyline points="297,201 297,670" fill="none" stroke="#777" stroke-width="1.8"/>
-  <circle cx="297" cy="670" r="3.5" fill="#777"/>
+  <polyline points="297,201 297,720" fill="none" stroke="#777" stroke-width="1.8"/>
+  <circle cx="297" cy="720" r="3.5" fill="#777"/>
 
   <!-- ════════════ RELAY MODULE ════════════ -->
-  <rect x="530" y="188" width="148" height="140" rx="6" fill="#1e2430" stroke="#3b82f6" stroke-width="1.8"/>
-  <text x="604" y="210" fill="#3b82f6" font-size="11" text-anchor="middle" font-weight="bold">Módulo Relay</text>
-  <text x="604" y="224" fill="#888" font-size="8" text-anchor="middle">1 canal 5V</text>
-  <text x="536" y="248" fill="#e74c3c" font-size="9">VCC</text>
-  <line x1="505" y1="244" x2="530" y2="244" stroke="#e74c3c" stroke-width="1.8"/>
-  <text x="536" y="270" fill="#777" font-size="9">GND</text>
-  <line x1="505" y1="266" x2="530" y2="266" stroke="#777" stroke-width="1.8"/>
-  <text x="536" y="335" fill="#3b82f6" font-size="9">IN</text>
+  <rect x="540" y="240" width="148" height="140" rx="6" fill="#1e2430" stroke="#3b82f6" stroke-width="1.8"/>
+  <text x="614" y="262" fill="#3b82f6" font-size="11" text-anchor="middle" font-weight="bold">Módulo Relay</text>
+  <text x="614" y="276" fill="#888" font-size="8" text-anchor="middle">1 canal 5V</text>
+  <text x="546" y="302" fill="#e74c3c" font-size="9">VCC</text>
+  <line x1="516" y1="298" x2="540" y2="298" stroke="#e74c3c" stroke-width="1.8"/>
+  <text x="546" y="322" fill="#777" font-size="9">GND</text>
+  <line x1="516" y1="318" x2="540" y2="318" stroke="#777" stroke-width="1.8"/>
+  <text x="546" y="380" fill="#3b82f6" font-size="9">IN</text>
   <!-- Salida relay -->
-  <line x1="678" y1="278" x2="720" y2="278" stroke="#e6e6e6" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <line x1="678" y1="296" x2="720" y2="296" stroke="#e6e6e6" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <text x="724" y="282" fill="#888" font-size="8">→ Motor /</text>
-  <text x="724" y="297" fill="#888" font-size="8">   Portón</text>
+  <line x1="688" y1="340" x2="730" y2="340" stroke="#e6e6e6" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="688" y1="358" x2="730" y2="358" stroke="#e6e6e6" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="734" y="344" fill="#888" font-size="8">→ Motor /</text>
+  <text x="734" y="359" fill="#888" font-size="8">   Portón</text>
   <!-- Relay VCC → 5V bus -->
-  <polyline points="505,244 505,50" fill="none" stroke="#e74c3c" stroke-width="1.8"/>
-  <circle cx="505" cy="50" r="3.5" fill="#e74c3c"/>
+  <polyline points="516,298 516,50" fill="none" stroke="#e74c3c" stroke-width="1.8"/>
+  <circle cx="516" cy="50" r="3.5" fill="#e74c3c"/>
   <!-- Relay GND → GND bus -->
-  <polyline points="505,266 505,670" fill="none" stroke="#777" stroke-width="1.8"/>
-  <circle cx="505" cy="670" r="3.5" fill="#777"/>
+  <polyline points="516,318 516,720" fill="none" stroke="#777" stroke-width="1.8"/>
+  <circle cx="516" cy="720" r="3.5" fill="#777"/>
 
-  <!-- ════════════ FS1000A TRANSMISOR ════════════ -->
-  <rect x="530" y="355" width="148" height="90" rx="6" fill="#1e2430" stroke="#14b8a6" stroke-width="1.8"/>
-  <text x="604" y="375" fill="#14b8a6" font-size="11" text-anchor="middle" font-weight="bold">FS1000A</text>
-  <text x="604" y="388" fill="#888" font-size="8" text-anchor="middle">Transmisor 433MHz</text>
-  <text x="536" y="403" fill="#14b8a6" font-size="9">DATA</text>
-  <text x="536" y="421" fill="#f97316" font-size="9">VCC 3.3V</text>
-  <line x1="530" y1="417" x2="522" y2="417" stroke="#f97316" stroke-width="1.8"/>
-  <text x="536" y="437" fill="#777" font-size="9">GND</text>
-  <line x1="530" y1="433" x2="518" y2="433" stroke="#777" stroke-width="1.8"/>
-  <!-- Antena FS1000A -->
-  <line x1="678" y1="374" x2="695" y2="355" stroke="#888" stroke-width="1" stroke-dasharray="3,2"/>
-  <text x="697" y="352" fill="#555" font-size="8">17cm</text>
-  <!-- FS1000A VCC → 3.3V bus (x=522, entre relay y ESP32) -->
-  <polyline points="522,417 522,75" fill="none" stroke="#f97316" stroke-width="1.8"/>
-  <circle cx="522" cy="75" r="3.5" fill="#f97316"/>
-  <!-- FS1000A GND → GND bus -->
-  <polyline points="518,433 518,670" fill="none" stroke="#777" stroke-width="1.8"/>
-  <circle cx="518" cy="670" r="3.5" fill="#777"/>
-
-  <!-- Nota DS3231 (debajo de FS1000A) -->
-  <rect x="526" y="460" width="242" height="36" rx="4" fill="none" stroke="#a855f7" stroke-width="1" stroke-dasharray="4,2"/>
-  <text x="647" y="476" fill="#a855f7" font-size="9" text-anchor="middle">DS3231: SDA→GPIO21, SCL→GPIO22</text>
-  <text x="647" y="490" fill="#888" font-size="8" text-anchor="middle">VCC=3.3V  GND  (I2C por defecto ESP32)</text>
+  <!-- Nota DS3231 -->
+  <rect x="536" y="430" width="242" height="36" rx="4" fill="none" stroke="#a855f7" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="657" y="446" fill="#a855f7" font-size="9" text-anchor="middle">DS3231: SDA→GPIO21, SCL→GPIO22</text>
+  <text x="657" y="460" fill="#888" font-size="8" text-anchor="middle">VCC=3.3V  GND  (I2C por defecto ESP32)</text>
 
   <!-- ════════════ LEYENDA ════════════ -->
-  <rect x="310" y="558" width="380" height="138" rx="6" fill="#1a1d24" stroke="#3a3e48" stroke-width="1"/>
-  <text x="500" y="576" fill="#888" font-size="10" text-anchor="middle" font-weight="bold">Referencias</text>
-  <line x1="325" y1="589" x2="360" y2="589" stroke="#e74c3c" stroke-width="2.2"/>
-  <text x="368" y="593" fill="#e6e6e6" font-size="9">5V — Fuente, MX VCC, Relay VCC, ESP32 VIN</text>
-  <line x1="325" y1="607" x2="360" y2="607" stroke="#f97316" stroke-width="2.2"/>
-  <text x="368" y="611" fill="#e6e6e6" font-size="9">3.3V — DS3231 VCC, FS1000A VCC (pin 3V3)</text>
-  <line x1="325" y1="625" x2="360" y2="625" stroke="#777" stroke-width="2.2"/>
-  <text x="368" y="629" fill="#e6e6e6" font-size="9">GND</text>
-  <line x1="325" y1="643" x2="360" y2="643" stroke="#4ade80" stroke-width="2.2"/>
-  <text x="368" y="647" fill="#e6e6e6" font-size="9">DATA → divisor R1/R2 → GPIO27 (RX)</text>
-  <line x1="325" y1="661" x2="360" y2="661" stroke="#3b82f6" stroke-width="2.2"/>
-  <text x="368" y="665" fill="#e6e6e6" font-size="9">GPIO26 → Relay IN</text>
-  <line x1="325" y1="679" x2="360" y2="679" stroke="#14b8a6" stroke-width="2.2"/>
-  <text x="368" y="683" fill="#e6e6e6" font-size="9">GPIO25 → FS1000A DATA (TX)</text>
-  <line x1="500" y1="643" x2="535" y2="643" stroke="#a855f7" stroke-width="2.2"/>
-  <text x="543" y="647" fill="#e6e6e6" font-size="9">I2C SDA (GPIO21) → DS3231</text>
-  <line x1="500" y1="661" x2="535" y2="661" stroke="#a855f7" stroke-width="2.2" stroke-dasharray="6,3"/>
-  <text x="543" y="665" fill="#e6e6e6" font-size="9">I2C SCL (GPIO22) → DS3231</text>
+  <rect x="310" y="612" width="540" height="145" rx="6" fill="#1a1d24" stroke="#3a3e48" stroke-width="1"/>
+  <text x="580" y="628" fill="#888" font-size="10" text-anchor="middle" font-weight="bold">Referencias (colores = cables físicos)</text>
+  <!-- columna izquierda -->
+  <line x1="320" y1="641" x2="352" y2="641" stroke="#e74c3c" stroke-width="2.2"/>
+  <text x="358" y="645" fill="#e6e6e6" font-size="9">5V — Fuente / Relay VCC / ESP32 VIN</text>
+  <line x1="320" y1="656" x2="352" y2="656" stroke="#f97316" stroke-width="2.2"/>
+  <text x="358" y="660" fill="#e6e6e6" font-size="9">3V3 bus — CC1101 VCC (cable rojo), DS3231 VCC</text>
+  <line x1="320" y1="671" x2="352" y2="671" stroke="#777" stroke-width="2.2"/>
+  <text x="358" y="675" fill="#e6e6e6" font-size="9">GND bus</text>
+  <line x1="320" y1="686" x2="352" y2="686" stroke="#8d6748" stroke-width="2.2"/>
+  <text x="358" y="690" fill="#e6e6e6" font-size="9">CC1101 GND (pin 1) — café</text>
+  <line x1="320" y1="701" x2="352" y2="701" stroke="#3b82f6" stroke-width="2.2"/>
+  <text x="358" y="705" fill="#e6e6e6" font-size="9">GPIO26 → Relay IN</text>
+  <line x1="320" y1="716" x2="352" y2="716" stroke="#a855f7" stroke-width="2.2"/>
+  <text x="358" y="720" fill="#e6e6e6" font-size="9">I2C SDA(21)/SCL(22) → DS3231</text>
+  <!-- columna derecha (señales CC1101) -->
+  <line x1="535" y1="641" x2="567" y2="641" stroke="#fb923c" stroke-width="2.2"/>
+  <text x="573" y="645" fill="#e6e6e6" font-size="9">GDO0 (GPIO27) → RX — naranja</text>
+  <line x1="535" y1="656" x2="567" y2="656" stroke="#94a3b8" stroke-width="2.2"/>
+  <text x="573" y="660" fill="#e6e6e6" font-size="9">GDO2 (GPIO32) → TX — gris</text>
+  <line x1="535" y1="671" x2="567" y2="671" stroke="#60a5fa" stroke-width="2.2"/>
+  <text x="573" y="675" fill="#e6e6e6" font-size="9">MOSI (GPIO23) — azul</text>
+  <line x1="535" y1="686" x2="567" y2="686" stroke="#e0e0e0" stroke-width="2.2"/>
+  <text x="573" y="690" fill="#e6e6e6" font-size="9">MISO (GPIO19) — blanco</text>
+  <line x1="535" y1="701" x2="567" y2="701" stroke="#4ade80" stroke-width="2.2"/>
+  <text x="573" y="705" fill="#e6e6e6" font-size="9">SCK (GPIO18) — verde</text>
+  <line x1="535" y1="716" x2="567" y2="716" stroke="#fbbf24" stroke-width="2.2"/>
+  <text x="573" y="720" fill="#e6e6e6" font-size="9">CSN (GPIO5) — amarillo</text>
 
 </svg>
