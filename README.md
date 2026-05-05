@@ -172,7 +172,7 @@ Lista todos los controles remotos registrados y permite gestionarlos.
 4. El código se guarda automáticamente.
 
 **Generar control único (requiere CC1101 conectado):**
-1. Escribí un nombre en la sección **Generar control unico**.
+1. Escribe un nombre en la sección **Generar control unico**.
 2. Presioná **Generar y transmitir**.
 3. El ESP32 genera un código de 24 bits por RNG de hardware, lo guarda y lo transmite cada segundo durante 15 seg.
 4. Poné tu control de aprendizaje en modo aprendizaje y apuntalo al portón durante esos 15 seg.

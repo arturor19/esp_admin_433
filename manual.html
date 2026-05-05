@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual de uso — Control de Portón 433MHz con ESP32</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --surface: #f8f9fa;
+    --border: #dee2e6;
+    --text: #212529;
+    --muted: #6c757d;
+    --accent: #0d6efd;
+    --accent-light: #e7f1ff;
+    --success: #198754;
+    --success-light: #d1e7dd;
+    --warn: #ffc107;
+    --warn-light: #fff3cd;
+    --danger: #dc3545;
+    --danger-light: #f8d7da;
+    --code-bg: #f1f3f5;
+    --shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+
+  html { font-size: 14px; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.65;
+    padding: 0;
+  }
+
+  /* ── Cover page ─────────────────────────────────────────── */
+  .cover {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 60%, #1c2230 100%);
+    color: #fff;
+    text-align: center;
+    padding: 60px 40px;
+    page-break-after: always;
+  }
+  .cover-icon { font-size: 72px; margin-bottom: 24px; }
+  .cover h1 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 12px; }
+  .cover .subtitle { font-size: 1.1rem; color: #8b949e; margin-bottom: 40px; }
+  .cover-chips { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .chip {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #c9d1d9;
+  }
+  .chip.green { background: rgba(46,160,67,.15); border-color: rgba(46,160,67,.3); color: #3fb950; }
+  .chip.blue  { background: rgba(88,166,255,.12); border-color: rgba(88,166,255,.25); color: #79c0ff; }
+  .cover-meta {
+    margin-top: 48px;
+    font-size: 12px;
+    color: #484f58;
+  }
+
+  /* ── TOC ────────────────────────────────────────────────── */
+  .toc-page {
+    padding: 56px 64px;
+    page-break-after: always;
+  }
+  .toc-page h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+  .toc-list { list-style: none; }
+  .toc-list li { display: flex; align-items: baseline; gap: 6px; padding: 5px 0; font-size: 13.5px; border-bottom: 1px dotted #dee2e6; }
+  .toc-list li span.toc-num { font-weight: 700; color: var(--accent); min-width: 28px; font-size: 12px; }
+  .toc-list li span.toc-title { flex: 1; }
+  .toc-list li span.toc-page-num { color: var(--muted); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Content wrapper ────────────────────────────────────── */
+  .content { padding: 56px 64px; max-width: 900px; margin: 0 auto; }
+  .section { page-break-inside: avoid; margin-bottom: 48px; }
+  .section:last-child { margin-bottom: 0; }
+
+  /* Section header band */
+  .section-header {
+    background: linear-gradient(90deg, var(--accent) 0%, #3d8bfd 100%);
+    color: #fff;
+    padding: 14px 22px;
+    border-radius: 8px 8px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 0;
+  }
+  .section-header .sec-icon { font-size: 20px; }
+  .section-header h2 { font-size: 1.05rem; font-weight: 700; letter-spacing: .2px; }
+  .section-header .sec-num {
+    background: rgba(255,255,255,.2);
+    border-radius: 50%;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+    margin-left: auto;
+  }
+
+  .section-body {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    padding: 22px 24px;
+  }
+
+  h3 {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin: 20px 0 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3:first-child { margin-top: 0; }
+
+  p { margin-bottom: 10px; font-size: 13.5px; }
+  p:last-child { margin-bottom: 0; }
+
+  ul, ol { padding-left: 20px; margin-bottom: 10px; }
+  li { margin-bottom: 4px; font-size: 13.5px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  thead tr { background: var(--accent); color: #fff; }
+  thead th { padding: 9px 12px; text-align: left; font-weight: 600; }
+  tbody tr:nth-child(even) { background: rgba(13,110,253,.04); }
+  tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Code */
+  code {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 12px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: #c9254a;
+  }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    border: 1px solid #30363d;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
+
+  /* Callouts */
+  .note, .warn-box, .danger-box, .tip-box {
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    font-size: 13px;
+    border-left: 4px solid;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .note        { background: var(--accent-light); border-color: var(--accent); }
+  .warn-box    { background: var(--warn-light);   border-color: var(--warn); }
+  .danger-box  { background: var(--danger-light); border-color: var(--danger); }
+  .tip-box     { background: var(--success-light);border-color: var(--success); }
+  .note-icon   { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .3px;
+  }
+  .badge-green  { background: var(--success-light); color: var(--success); }
+  .badge-red    { background: var(--danger-light);  color: var(--danger); }
+  .badge-blue   { background: var(--accent-light);  color: var(--accent); }
+  .badge-yellow { background: var(--warn-light);    color: #856404; }
+
+  /* Step list */
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps li {
+    counter-increment: step;
+    padding: 8px 12px 8px 44px;
+    position: relative;
+    margin-bottom: 6px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13.5px;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Pin diagram */
+  .pinout-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 12px 0;
+  }
+  .pin-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .pin-card-head {
+    background: #1c2230;
+    color: #79c0ff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 7px 12px;
+    letter-spacing: .5px;
+  }
+  .pin-card table { margin: 0; font-size: 12px; }
+  .pin-card table tbody tr:nth-child(even) { background: #f8f9fa; }
+  .pin-card table tbody td { padding: 6px 10px; border-bottom: 1px solid #eee; }
+
+  /* Flow diagram */
+  .flow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: #0d1117;
+    color: #e6edf3;
+    border-radius: 8px;
+    padding: 20px 24px;
+    line-height: 1.8;
+    border: 1px solid #30363d;
+    margin: 12px 0;
+    white-space: pre;
+  }
+
+  /* UI screenshot mockup */
+  .ui-mock {
+    background: #1a1f2e;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 12px 0;
+    border: 1px solid #30363d;
+    box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  }
+  .ui-mock-bar {
+    background: #0d1117;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ui-mock-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .ui-mock-url {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #8b949e;
+    margin-left: 8px;
+  }
+  .ui-mock-body { padding: 16px 20px; }
+
+  /* Nav tabs mock */
+  .mock-nav { display: flex; gap: 2px; margin-bottom: 16px; }
+  .mock-tab {
+    padding: 7px 16px;
+    border-radius: 6px 6px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    background: #161b22;
+    color: #8b949e;
+    border: 1px solid #30363d;
+    border-bottom: none;
+  }
+  .mock-tab.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+
+  .mock-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 0 8px 8px 8px;
+    padding: 14px 16px;
+    color: #c9d1d9;
+    font-size: 12.5px;
+  }
+  .mock-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+  }
+  .mock-row:last-child { border-bottom: none; }
+  .mock-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .mock-badge.ok   { background: rgba(46,160,67,.2); color: #3fb950; }
+  .mock-badge.err  { background: rgba(220,53,69,.2);  color: #f85149; }
+  .mock-badge.warn { background: rgba(255,193,7,.2);  color: #d29922; }
+  .mock-input {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 5px;
+    padding: 6px 10px;
+    color: #c9d1d9;
+    font-size: 12px;
+    width: 100%;
+    margin-bottom: 8px;
+    font-family: inherit;
+  }
+  .mock-btn {
+    background: #0d6efd;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  .mock-btn.sec  { background: #21262d; color: #c9d1d9; }
+  .mock-btn.warn { background: #dc3545; }
+  .mock-h2 { color: #79c0ff; font-size: 13px; font-weight: 700; margin: 10px 0 8px; }
+  .mock-hint { font-size: 11px; color: #484f58; margin-top: 6px; }
+  .mock-checkbox-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+  }
+  .mock-checkbox-label { font-size: 12.5px; font-weight: 600; color: #c9d1d9; }
+  .mock-checkbox { width: 16px; height: 16px; accent-color: #0d6efd; }
+  .mock-log-item {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 11.5px;
+  }
+  .mock-log-item:last-child { border-bottom: none; }
+  .mock-log-top { display: flex; justify-content: space-between; align-items: center; }
+  .mock-log-name { font-weight: 600; color: #e6edf3; }
+  .mock-log-ts { color: #484f58; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; }
+  .mock-log-code { color: #8b949e; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin-top: 2px; }
+
+  /* Priority list */
+  .priority-list { list-style: none; padding: 0; counter-reset: pri; }
+  .priority-list li {
+    counter-increment: pri;
+    padding: 8px 12px 8px 42px;
+    position: relative;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+  .priority-list li::before {
+    content: counter(pri);
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--success); color: #fff;
+    font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Page break helpers */
+  .page-break { page-break-after: always; }
+
+  /* Print / PDF */
+  @media print {
+    body { font-size: 12px; }
+    .cover { min-height: 100vh; }
+    .section { page-break-inside: avoid; }
+    pre, .flow, .ui-mock { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     PORTADA
+═══════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="cover-icon">🔐</div>
+  <h1>Control de Portón 433MHz</h1>
+  <p class="subtitle">Manual de usuario — Firmware ESP32 + CC1101</p>
+  <div class="cover-chips">
+    <span class="chip green">● ESP32 DevKit</span>
+    <span class="chip blue">CC1101 433MHz</span>
+    <span class="chip">Panel web</span>
+    <span class="chip">RTC DS3231</span>
+    <span class="chip">Telegram</span>
+    <span class="chip">LittleFS</span>
+  </div>
+  <div class="cover-meta">Mayo 2026 · arturor19/esp_admin_433</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     TABLA DE CONTENIDOS
+═══════════════════════════════════════════════════════════ -->
+<div class="toc-page">
+  <h2>Tabla de contenidos</h2>
+  <ul class="toc-list">
+    <li><span class="toc-num">01</span><span class="toc-title">Características del sistema</span></li>
+    <li><span class="toc-num">02</span><span class="toc-title">Hardware requerido y conexiones</span></li>
+    <li><span class="toc-num">03</span><span class="toc-title">Librerías y configuración</span></li>
+    <li><span class="toc-num">04</span><span class="toc-title">Primer uso — carga y acceso inicial</span></li>
+    <li><span class="toc-num">05</span><span class="toc-title">Panel web — Pestaña Registros</span></li>
+    <li><span class="toc-num">06</span><span class="toc-title">Panel web — Pestaña Controles</span></li>
+    <li><span class="toc-num">07</span><span class="toc-title">Panel web — Pestaña Red</span></li>
+    <li><span class="toc-num">08</span><span class="toc-title">Panel web — Pestaña Admins</span></li>
+    <li><span class="toc-num">09</span><span class="toc-title">Relevador — comportamiento y configuración</span></li>
+    <li><span class="toc-num">10</span><span class="toc-title">Factory reset</span></li>
+    <li><span class="toc-num">11</span><span class="toc-title">Archivos en flash (LittleFS)</span></li>
+    <li><span class="toc-num">12</span><span class="toc-title">Seguridad</span></li>
+    <li><span class="toc-num">13</span><span class="toc-title">Diagramas de flujo</span></li>
+    <li><span class="toc-num">14</span><span class="toc-title">Configuración de notificaciones Telegram</span></li>
+  </ul>
+</div>
+
+<div class="content">
+
+<!-- ══════ 01 CARACTERÍSTICAS ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">✨</span>
+    <h2>Características del sistema</h2>
+    <span class="sec-num">01</span>
+  </div>
+  <div class="section-body">
+    <ul>
+      <li>Aprende y registra controles remotos 433MHz existentes</li>
+      <li>Genera y transmite códigos únicos de 24 bits (RNG de hardware) para provisionar controles de aprendizaje</li>
+      <li>Activa un relevador físico al recibir un código autorizado</li>
+      <li>Bloquea controles individualmente sin borrarlos</li>
+      <li>Registro automático de cada acceso (fecha, hora, nombre, código)</li>
+      <li>Opción de no registrar códigos desconocidos (configurable desde el panel)</li>
+      <li>Panel web con autenticación de usuarios admin (múltiples cuentas)</li>
+      <li>Red WiFi dual: AP propio + conexión a WiFi de casa simultáneos</li>
+      <li>Sincronización NTP con zona horaria configurable; botón de sincronización manual</li>
+      <li>Soporte para RTC DS3231 (opcional) para mantener hora sin internet</li>
+      <li>Pulso del relevador configurable desde la web (0.1 – 30 segundos)</li>
+      <li>Factory reset por botón físico BOOT</li>
+      <li>Exportación e importación de controles en CSV</li>
+      <li>Notificaciones Telegram configurables por tipo de evento</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ══════ 02 HARDWARE ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🔌</span>
+    <h2>Hardware requerido y conexiones</h2>
+    <span class="sec-num">02</span>
+  </div>
+  <div class="section-body">
+    <h3>Componentes</h3>
+    <table>
+      <thead><tr><th>Componente</th><th>Detalle</th></tr></thead>
+      <tbody>
+        <tr><td><strong>ESP32 DevKit</strong></td><td>Cualquier variante con botón BOOT en GPIO 0</td></tr>
+        <tr><td><strong>CC1101</strong></td><td>Transceptor 433MHz (TX + RX en un módulo) — reemplaza al MX-RM-5V + FS1000A</td></tr>
+        <tr><td><strong>Relevador (relay)</strong></td><td>Módulo de 1 canal, 5V o 3.3V según tu módulo</td></tr>
+        <tr><td><strong>LED azul</strong></td><td>Integrado en GPIO 2 (incluido en la mayoría de DevKits)</td></tr>
+        <tr><td><strong>RTC DS3231</strong></td><td><span class="badge badge-yellow">Opcional</span> — mantiene hora sin internet, incluye batería CR2032</td></tr>
+      </tbody>
+    </table>
+
+    <div class="pinout-grid">
+      <div class="pin-card">
+        <div class="pin-card-head">CC1101 → ESP32</div>
+        <table>
+          <tbody>
+            <tr><td><code>VCC</code></td><td>3.3V</td></tr>
+            <tr><td><code>GND</code></td><td>GND</td></tr>
+            <tr><td><code>MOSI</code></td><td>GPIO 23</td></tr>
+            <tr><td><code>MISO</code></td><td>GPIO 19</td></tr>
+            <tr><td><code>SCK</code></td><td>GPIO 18</td></tr>
+            <tr><td><code>CSN / SS</code></td><td>GPIO 5</td></tr>
+            <tr><td><code>GDO0</code></td><td>GPIO 27 (RX)</td></tr>
+            <tr><td><code>GDO2</code></td><td>GPIO 32 (TX)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pin-card">
+        <div class="pin-card-head">Señales adicionales</div>
+        <table>
+          <tbody>
+            <tr><td><code>Relevador IN</code></td><td>GPIO 26</td></tr>
+            <tr><td><code>LED estado</code></td><td>GPIO 2 (integrado)</td></tr>
+            <tr><td><code>Factory reset</code></td><td>GPIO 0 (BOOT)</td></tr>
+            <tr><td><code>DS3231 SDA</code></td><td>GPIO 21</td></tr>
+            <tr><td><code>DS3231 SCL</code></td><td>GPIO 22</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="note">
+      <span class="note-icon">ℹ️</span>
+      <span>El CC1101 y el DS3231 operan a <strong>3.3V</strong>. No conectar a 5V. Para mayor alcance RF soldá una antena de <strong>17.3 cm</strong> (λ/4 a 433MHz) al pin ANT del CC1101.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 03 LIBRERÍAS Y CONFIG ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">📦</span>
+    <h2>Librerías y configuración</h2>
+    <span class="sec-num">03</span>
+  </div>
+  <div class="section-body">
+    <h3>Librerías (Sketch → Gestionar librerías)</h3>
+    <table>
+      <thead><tr><th>Librería</th><th>Autor</th></tr></thead>
+      <tbody>
+        <tr><td><strong>ELECHOUSE_CC1101_SRC_DRV</strong></td><td>LSatan (SmartRC-CC1101-Driver)</td></tr>
+        <tr><td><strong>RCSwitch</strong></td><td>sui77</td></tr>
+        <tr><td><strong>ArduinoJson</strong></td><td>Benoit Blanchon</td></tr>
+        <tr><td><strong>RTClib</strong></td><td>Adafruit <span class="badge badge-yellow">Opcional</span></td></tr>
+      </tbody>
+    </table>
+    <div class="note">
+      <span class="note-icon">ℹ️</span>
+      <span><code>WiFi</code>, <code>WebServer</code>, <code>LittleFS</code>, <code>WiFiClientSecure</code>, <code>time.h</code> y <code>mbedtls/md5.h</code> vienen incluidas en el core de ESP32. Los falsos positivos del IntelliSense no impiden la compilación.</span>
+    </div>
+
+    <h3>Constantes configurables (porton_433.ino)</h3>
+<pre><code>#define CC1101_CS_PIN         5    // SPI CSN / SS del CC1101
+#define RF_RX_PIN            27    // GDO0 — interrupción RX
+#define RF_TX_PIN            32    // GDO2 — transmisión TX
+#define RELAY_PIN            26    // Pin de señal del relevador
+#define RELAY_PULSE_MS     1000    // Valor por defecto del pulso (ms)
+#define PROVISION_DURATION_MS 15000 // Tiempo transmitiendo código nuevo
+#define COOLDOWN_MS          3000  // Ignora mismo código (ventana de tiempo)
+#define MAX_LOGS              500  // Límite del historial de accesos</code></pre>
+    <div class="tip-box">
+      <span class="note-icon">💡</span>
+      <span>El pulso del relevador también se puede ajustar en cualquier momento desde <strong>Red → Relevador</strong> en el panel web, sin necesidad de recompilar ni reflashear.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 04 PRIMER USO ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🚀</span>
+    <h2>Primer uso — carga y acceso inicial</h2>
+    <span class="sec-num">04</span>
+  </div>
+  <div class="section-body">
+    <h3>Cargar el sketch</h3>
+    <ol class="steps">
+      <li>Abrí <code>porton_433.ino</code> en <strong>Arduino IDE</strong>.</li>
+      <li>Seleccioná la placa: <strong>Herramientas → Placa → ESP32 Dev Module</strong>.</li>
+      <li>Seleccioná el puerto COM correcto.</li>
+      <li>Cargá el sketch con el botón <strong>Subir</strong> (o <kbd>Ctrl+U</kbd>).</li>
+    </ol>
+
+    <h3>Conectarse al portón</h3>
+    <p>Al encender por primera vez, el ESP32 crea su propia red WiFi:</p>
+    <table>
+      <tbody>
+        <tr><td><strong>SSID</strong></td><td><code>Porton_Config</code></td></tr>
+        <tr><td><strong>Password</strong></td><td><code>porton1234</code></td></tr>
+        <tr><td><strong>URL</strong></td><td><code>http://192.168.4.1</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>Login inicial</h3>
+    <table>
+      <tbody>
+        <tr><td><strong>Usuario</strong></td><td><code>admin</code></td></tr>
+        <tr><td><strong>Password</strong></td><td><code>admin1234</code></td></tr>
+      </tbody>
+    </table>
+    <div class="danger-box">
+      <span class="note-icon">⚠️</span>
+      <span><strong>Importante:</strong> Cambiá estas credenciales inmediatamente desde <strong>Admins → Cambiar mi password</strong> para evitar acceso no autorizado.</span>
+    </div>
+
+    <div class="ui-mock" style="margin-top:16px">
+      <div class="ui-mock-bar">
+        <div class="ui-mock-dot" style="background:#ff5f57"></div>
+        <div class="ui-mock-dot" style="background:#febc2e"></div>
+        <div class="ui-mock-dot" style="background:#28c840"></div>
+        <div class="ui-mock-url">http://192.168.4.1</div>
+      </div>
+      <div class="ui-mock-body" style="max-width:320px;margin:0 auto">
+        <div style="text-align:center;padding:20px 0 16px">
+          <div style="font-size:28px;margin-bottom:8px">🔐</div>
+          <div style="font-size:16px;font-weight:700;color:#e6edf3">Control de Portón</div>
+        </div>
+        <input class="mock-input" type="text" value="admin" readonly>
+        <input class="mock-input" type="password" value="••••••••" readonly>
+        <button class="mock-btn" style="width:100%;margin-bottom:0">Ingresar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 05 REGISTROS ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">📋</span>
+    <h2>Panel web — Pestaña Registros</h2>
+    <span class="sec-num">05</span>
+  </div>
+  <div class="section-body">
+    <p>Historial completo de todos los accesos al portón, con fecha/hora, nombre del control y código RF detectado.</p>
+    <ul>
+      <li><strong>Registrar códigos desconocidos</strong> (checkbox al tope): al desactivarlo, los códigos RF no registrados no aparecen en el historial. Se aplica al instante y persiste en flash.</li>
+      <li>Accesos de controles <span class="badge badge-red">BLOQUEADO</span> se muestran en rojo.</li>
+      <li><strong>Actualizar</strong> recarga el listado manualmente.</li>
+      <li><strong>Descargar CSV</strong> exporta el historial completo.</li>
+      <li><strong>Borrar registros</strong> elimina todo el historial (irreversible).</li>
+    </ul>
+
+    <div class="ui-mock">
+      <div class="ui-mock-bar">
+        <div class="ui-mock-dot" style="background:#ff5f57"></div>
+        <div class="ui-mock-dot" style="background:#febc2e"></div>
+        <div class="ui-mock-dot" style="background:#28c840"></div>
+        <div class="ui-mock-url">http://192.168.4.1</div>
+      </div>
+      <div class="ui-mock-body">
+        <div class="mock-nav">
+          <div class="mock-tab active">Registros</div>
+          <div class="mock-tab">Controles</div>
+          <div class="mock-tab">Red</div>
+          <div class="mock-tab">Admins</div>
+        </div>
+        <div class="mock-card">
+          <div class="mock-checkbox-row">
+            <span class="mock-checkbox-label">Registrar codigos desconocidos</span>
+            <input type="checkbox" class="mock-checkbox" checked>
+          </div>
+          <div class="mock-h2">Ultimos accesos</div>
+          <div class="mock-log-item">
+            <div class="mock-log-top">
+              <span class="mock-log-name">Arturo</span>
+              <span class="mock-badge ok">ACCESO</span>
+            </div>
+            <div class="mock-log-ts">2026-05-04 09:15:32</div>
+            <div class="mock-log-code">Código: 4521877</div>
+          </div>
+          <div class="mock-log-item">
+            <div class="mock-log-top">
+              <span class="mock-log-name">Vecino</span>
+              <span class="mock-badge err">BLOQUEADO</span>
+            </div>
+            <div class="mock-log-ts">2026-05-04 08:42:11</div>
+            <div class="mock-log-code">Código: 1983042</div>
+          </div>
+          <div class="mock-log-item">
+            <div class="mock-log-top">
+              <span class="mock-log-name">Desconocido</span>
+              <span class="mock-badge warn">DESCONOCIDO</span>
+            </div>
+            <div class="mock-log-ts">2026-05-03 22:07:55</div>
+            <div class="mock-log-code">Código: 9912341</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="mock-btn sec">Actualizar</button>
+            <button class="mock-btn sec">Descargar CSV</button>
+            <button class="mock-btn warn">Borrar registros</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 06 CONTROLES ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">📡</span>
+    <h2>Panel web — Pestaña Controles</h2>
+    <span class="sec-num">06</span>
+  </div>
+  <div class="section-body">
+    <h3>Aprender un control existente</h3>
+    <ol class="steps">
+      <li>Escribí un nombre (ej. <code>Arturo</code>, <code>Visitante</code>).</li>
+      <li>Presioná <strong>Iniciar aprendizaje</strong>.</li>
+      <li>Apretá una vez el botón del control remoto.</li>
+      <li>El código se guarda automáticamente.</li>
+    </ol>
+
+    <h3>Generar control único</h3>
+    <ol class="steps">
+      <li>Escribe un nombre en la sección <strong>Generar control unico</strong>.</li>
+      <li>Presioná <strong>Generar y transmitir</strong>.</li>
+      <li>El ESP32 genera un código de 24 bits por RNG de hardware y lo transmite cada segundo durante 15 s.</li>
+      <li>Poné tu control de aprendizaje en modo aprendizaje y apuntalo al portón.</li>
+      <li>Si no grabó, presioná el botón <strong>Retransmitir 15s</strong> que aparece en el aviso amarillo.</li>
+    </ol>
+
+    <h3>Exportar / Importar</h3>
+    <ul>
+      <li><strong>Exportar Excel</strong> descarga todos los controles como <code>controles.csv</code>.</li>
+      <li><strong>Importar CSV</strong> carga controles desde un archivo CSV con el mismo formato.</li>
+    </ul>
+
+    <div class="ui-mock">
+      <div class="ui-mock-bar">
+        <div class="ui-mock-dot" style="background:#ff5f57"></div>
+        <div class="ui-mock-dot" style="background:#febc2e"></div>
+        <div class="ui-mock-dot" style="background:#28c840"></div>
+        <div class="ui-mock-url">http://192.168.4.1</div>
+      </div>
+      <div class="ui-mock-body">
+        <div class="mock-nav">
+          <div class="mock-tab">Registros</div>
+          <div class="mock-tab active">Controles</div>
+          <div class="mock-tab">Red</div>
+          <div class="mock-tab">Admins</div>
+        </div>
+        <div class="mock-card">
+          <div class="mock-h2">Controles guardados</div>
+          <div class="mock-row">
+            <span>Arturo <span class="mock-badge ok">HABILITADO</span></span>
+            <span style="font-family:monospace;font-size:11px;color:#8b949e">4521877</span>
+            <span><button class="mock-btn sec" style="padding:3px 8px;font-size:11px">Bloquear</button><button class="mock-btn warn" style="padding:3px 8px;font-size:11px">Borrar</button></span>
+          </div>
+          <div class="mock-row">
+            <span>Vecino <span class="mock-badge err">BLOQUEADO</span></span>
+            <span style="font-family:monospace;font-size:11px;color:#8b949e">1983042</span>
+            <span><button class="mock-btn sec" style="padding:3px 8px;font-size:11px">Habilitar</button><button class="mock-btn warn" style="padding:3px 8px;font-size:11px">Borrar</button></span>
+          </div>
+          <div class="mock-h2" style="margin-top:12px">Aprender control nuevo</div>
+          <input class="mock-input" placeholder="Nombre (ej. Usuario)" type="text">
+          <div style="display:flex;gap:8px">
+            <button class="mock-btn">Iniciar aprendizaje</button>
+            <button class="mock-btn sec">Cancelar</button>
+          </div>
+          <div class="mock-h2" style="margin-top:12px">Generar control unico</div>
+          <input class="mock-input" placeholder="Nombre (ej. Visitante)" type="text">
+          <div style="display:flex;gap:8px">
+            <button class="mock-btn">Generar y transmitir</button>
+            <button class="mock-btn sec">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 07 RED ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🌐</span>
+    <h2>Panel web — Pestaña Red</h2>
+    <span class="sec-num">07</span>
+  </div>
+  <div class="section-body">
+    <h3>Relevador</h3>
+    <p>Muestra el pulso actual y permite cambiarlo. Rango: <strong>0.1 – 30 segundos</strong>. El cambio se aplica al instante y persiste en <code>/relay.json</code>.</p>
+
+    <h3>AP del portón</h3>
+    <p>Cambia el SSID y contraseña de la red WiFi propia del dispositivo. El dispositivo se reinicia al guardar. Password mínimo 8 caracteres.</p>
+
+    <h3>Conexión a WiFi de casa</h3>
+    <p>Conecta el ESP32 a tu red doméstica para sincronización NTP y acceso desde la red local. El AP propio sigue funcionando en simultáneo.</p>
+
+    <h3>Notificaciones Telegram</h3>
+    <table>
+      <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+      <tbody>
+        <tr><td>Activar notificaciones</td><td>Toggle general de habilitación</td></tr>
+        <tr><td>Bot Token</td><td>Obtenido con @BotFather en Telegram</td></tr>
+        <tr><td>Chat ID</td><td>Obtenido con @userinfobot (grupos: número negativo, ej. <code>-1001234567</code>)</td></tr>
+        <tr><td>Acceso autorizado</td><td>Notifica cuando el portón se abre</td></tr>
+        <tr><td>Control bloqueado</td><td>Notifica intentos de controles bloqueados</td></tr>
+        <tr><td>Código desconocido</td><td>Notifica códigos RF no registrados</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Zona horaria</h3>
+    <p>Selector con opciones predefinidas para México (tres zonas), América Latina, España y UTC. Se aplica al instante sin reiniciar. Se guarda en <code>/tz.json</code> como cadena POSIX.</p>
+
+    <h3>Reloj / Hora del sistema</h3>
+    <p>Muestra el estado del DS3231 y la hora local actual.</p>
+    <ul>
+      <li><strong>Sincronizar NTP ahora</strong>: fuerza una sincronización de hora por red (requiere WiFi de casa). Si el DS3231 está conectado, también lo actualiza.</li>
+      <li><strong>Establecer hora manualmente</strong>: ingresás la hora en tu zona horaria local. El sistema la convierte a UTC internamente. Útil sin internet.</li>
+    </ul>
+
+    <h3>Prioridad de sincronización de hora</h3>
+    <ol class="priority-list">
+      <li>DS3231 (si conectado y hora válida año ≥ 2020) → se carga al arrancar</li>
+      <li>NTP al conectar al WiFi de casa → también actualiza el DS3231</li>
+      <li>DS3231 sin internet → mantiene hora con batería CR2032</li>
+      <li>Sin DS3231 ni internet → muestra <code>uptime+Xs</code></li>
+    </ol>
+
+    <div class="ui-mock">
+      <div class="ui-mock-bar">
+        <div class="ui-mock-dot" style="background:#ff5f57"></div>
+        <div class="ui-mock-dot" style="background:#febc2e"></div>
+        <div class="ui-mock-dot" style="background:#28c840"></div>
+        <div class="ui-mock-url">http://192.168.4.1</div>
+      </div>
+      <div class="ui-mock-body">
+        <div class="mock-nav">
+          <div class="mock-tab">Registros</div>
+          <div class="mock-tab">Controles</div>
+          <div class="mock-tab active">Red</div>
+          <div class="mock-tab">Admins</div>
+        </div>
+        <div class="mock-card">
+          <div class="mock-h2">Relevador</div>
+          <div class="mock-row"><span>Pulso actual</span><span class="mock-badge ok">1.0 s</span></div>
+          <input class="mock-input" type="number" value="1.0" style="margin-top:8px">
+          <button class="mock-btn">Guardar</button>
+          <div class="mock-h2" style="margin-top:12px">Reloj / Hora del sistema</div>
+          <div class="mock-row"><span>DS3231</span><span class="mock-badge ok">Conectado</span></div>
+          <div class="mock-row"><span>Hora local</span><span style="font-family:monospace;font-size:11px;color:#8b949e">2026-05-04 09:22:14</span></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="mock-btn sec">Sincronizar NTP ahora</button>
+          </div>
+          <div class="mock-h2" style="margin-top:12px">AP del porton</div>
+          <div class="mock-row"><span>Actual</span><span class="mock-badge blue">Porton_Config</span></div>
+          <input class="mock-input" placeholder="SSID" type="text" style="margin-top:8px">
+          <input class="mock-input" placeholder="Password" type="password">
+          <button class="mock-btn">Guardar y reiniciar</button>
+          <div class="mock-h2" style="margin-top:12px">WiFi de casa</div>
+          <div class="mock-row"><span>Estado</span><span class="mock-badge ok">Conectado</span></div>
+          <input class="mock-input" placeholder="SSID" type="text" style="margin-top:8px">
+          <input class="mock-input" placeholder="Contraseña" type="password">
+          <button class="mock-btn">Guardar y reiniciar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 08 ADMINS ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">👤</span>
+    <h2>Panel web — Pestaña Admins</h2>
+    <span class="sec-num">08</span>
+  </div>
+  <div class="section-body">
+    <ul>
+      <li><strong>Usuarios admin</strong>: lista todos los usuarios con acceso al panel. No se puede borrar el último admin.</li>
+      <li><strong>Agregar admin</strong>: crea un nuevo usuario con password propio (mínimo 6 caracteres).</li>
+      <li><strong>Cambiar mi password</strong>: requiere ingresar el password actual para confirmar.</li>
+    </ul>
+
+    <div class="ui-mock">
+      <div class="ui-mock-bar">
+        <div class="ui-mock-dot" style="background:#ff5f57"></div>
+        <div class="ui-mock-dot" style="background:#febc2e"></div>
+        <div class="ui-mock-dot" style="background:#28c840"></div>
+        <div class="ui-mock-url">http://192.168.4.1</div>
+      </div>
+      <div class="ui-mock-body">
+        <div class="mock-nav">
+          <div class="mock-tab">Registros</div>
+          <div class="mock-tab">Controles</div>
+          <div class="mock-tab">Red</div>
+          <div class="mock-tab active">Admins</div>
+        </div>
+        <div class="mock-card">
+          <div class="mock-h2">Usuarios admin</div>
+          <div class="mock-row">
+            <span style="font-weight:600;color:#e6edf3">admin</span>
+            <button class="mock-btn warn" style="padding:3px 8px;font-size:11px">Borrar</button>
+          </div>
+          <div class="mock-row">
+            <span style="font-weight:600;color:#e6edf3">arturo</span>
+            <button class="mock-btn warn" style="padding:3px 8px;font-size:11px">Borrar</button>
+          </div>
+          <div class="mock-h2" style="margin-top:12px">Agregar admin</div>
+          <input class="mock-input" placeholder="Usuario" type="text">
+          <input class="mock-input" placeholder="Password (mín. 6 caracteres)" type="password">
+          <button class="mock-btn">Agregar</button>
+          <div class="mock-h2" style="margin-top:12px">Cambiar mi password</div>
+          <input class="mock-input" placeholder="Password actual" type="password">
+          <input class="mock-input" placeholder="Nuevo password" type="password">
+          <button class="mock-btn">Cambiar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 09 RELEVADOR ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">⚡</span>
+    <h2>Relevador — comportamiento y configuración</h2>
+    <span class="sec-num">09</span>
+  </div>
+  <div class="section-body">
+    <p>El relevador se activa por el tiempo configurado (por defecto <strong>1 segundo</strong>) al recibir un código registrado y habilitado.</p>
+    <table>
+      <thead><tr><th>Situación</th><th>Relevador</th><th>Log</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Control registrado y habilitado</td>
+          <td><span class="badge badge-green">Se activa N seg</span></td>
+          <td>Acceso normal</td>
+        </tr>
+        <tr>
+          <td>Control registrado y bloqueado</td>
+          <td><span class="badge badge-red">No se activa</span></td>
+          <td><code>BLOQUEADO</code> en rojo</td>
+        </tr>
+        <tr>
+          <td>Código desconocido</td>
+          <td><span class="badge badge-red">No se activa</span></td>
+          <td><code>Desconocido</code> (si opción activa)</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="tip-box">
+      <span class="note-icon">💡</span>
+      <span>El tiempo de pulso se ajusta desde <strong>Red → Relevador</strong> (0.1 – 30 segundos) en tiempo real. El cambio persiste en flash (<code>/relay.json</code>) y sobrevive reinicios.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 10 FACTORY RESET ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🔄</span>
+    <h2>Factory Reset</h2>
+    <span class="sec-num">10</span>
+  </div>
+  <div class="section-body">
+    <p>Si olvidás el password del AP y no podés conectarte al panel:</p>
+    <ol class="steps">
+      <li>Mantené apretado el botón <strong>BOOT</strong> (GPIO 0) de la placa por <strong>5 segundos</strong>.</li>
+      <li>El LED azul parpadea con frecuencia creciente mientras contás.</li>
+      <li>Al completar los 5 segundos, el ESP32 reinicia con los valores por defecto:<br><code>SSID: Porton_Config</code> / <code>Password: porton1234</code></li>
+    </ol>
+    <div class="tip-box">
+      <span class="note-icon">✅</span>
+      <span>Los registros, controles aprendidos y usuarios admin <strong>NO se borran</strong> con el factory reset. Solo se resetea la configuración del AP (<code>/ap.json</code>).</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 11 LITTLEFS ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">💾</span>
+    <h2>Archivos en flash (LittleFS)</h2>
+    <span class="sec-num">11</span>
+  </div>
+  <div class="section-body">
+    <table>
+      <thead><tr><th>Archivo</th><th>Contenido</th></tr></thead>
+      <tbody>
+        <tr><td><code>/users.json</code></td><td>Controles remotos (código, nombre, bloqueado, bits)</td></tr>
+        <tr><td><code>/logs.json</code></td><td>Historial de accesos (máximo 500 entradas)</td></tr>
+        <tr><td><code>/admins.json</code></td><td>Usuarios admin con password hasheado (MD5)</td></tr>
+        <tr><td><code>/wifi.json</code></td><td>Credenciales del WiFi de casa</td></tr>
+        <tr><td><code>/ap.json</code></td><td>Configuración del AP propio (SSID + password)</td></tr>
+        <tr><td><code>/tz.json</code></td><td>Zona horaria como cadena POSIX (ej. <code>&lt;-06&gt;6</code>)</td></tr>
+        <tr><td><code>/telegram.json</code></td><td>Token, Chat ID y preferencias de notificaciones</td></tr>
+        <tr><td><code>/relay.json</code></td><td>Pulso del relevador en ms y flag <code>logUnknown</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════ 12 SEGURIDAD ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🛡️</span>
+    <h2>Seguridad</h2>
+    <span class="sec-num">12</span>
+  </div>
+  <div class="section-body">
+    <ul>
+      <li>El panel requiere login con sesión por cookie (duración 1 hora).</li>
+      <li>Los passwords se almacenan como hash MD5, nunca en texto plano.</li>
+      <li>Las sesiones viven solo en RAM; al reiniciar el ESP32 se cierran todas.</li>
+      <li>Máximo 5 sesiones simultáneas y 10 usuarios admin.</li>
+    </ul>
+    <div class="warn-box">
+      <span class="note-icon">⚠️</span>
+      <span><strong>No usa HTTPS</strong> (limitación de hardware ESP32). Se recomienda usar exclusivamente en red local de confianza, no expuesto a internet.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 13 FLUJOS ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">🔀</span>
+    <h2>Diagramas de flujo</h2>
+    <span class="sec-num">13</span>
+  </div>
+  <div class="section-body">
+    <h3>Transmisión de código único</h3>
+    <div class="flow">Usuario presiona "Generar y transmitir"
+        │
+        ▼
+  ESP32 genera código 24 bits (esp_random())
+  Guarda en users.json con el nombre asignado
+        │
+        ▼
+  Transmite via CC1101 cada 1 segundo
+  durante 15 seg (GDO2 / GPIO32)
+        │
+        ▼
+  Control de aprendizaje copia el código
+  └── Listo — control queda registrado con código único</div>
+
+    <h3>Detección RF</h3>
+    <div class="flow">Señal 433MHz recibida (GDO0 / GPIO27)
+        │
+        ▼
+  ¿Modo aprendizaje activo?
+   ├── Sí → Guarda código con el nombre ingresado. Fin.
+   └── No
+        │
+        ▼
+  ¿Código registrado?
+   ├── No → ¿logUnknown activo? → Log "Desconocido". Relevador inactivo. Fin.
+   └── Sí
+        │
+        ▼
+  ¿Control bloqueado?
+   ├── Sí → Log "BLOQUEADO", relevador inactivo. Fin.
+   └── No → Activa relevador N segundos + Log acceso + Telegram. Fin.</div>
+  </div>
+</div>
+
+<!-- ══════ 14 TELEGRAM ══════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="sec-icon">📲</span>
+    <h2>Configuración de notificaciones Telegram</h2>
+    <span class="sec-num">14</span>
+  </div>
+  <div class="section-body">
+    <p>El firmware puede enviar notificaciones a un grupo de Telegram cada vez que se registra un acceso. A continuación el flujo completo de configuración.</p>
+
+    <h3>1 · Crear el bot con BotFather</h3>
+    <ol>
+      <li>Abrir Telegram y buscar <strong>@BotFather</strong>.</li>
+      <li>Enviar <code>/start</code> y luego <code>/newbot</code>.</li>
+      <li>Seguir las instrucciones: elegir nombre y nombre de usuario.</li>
+      <li>Copiar y guardar el <strong>Bot Token</strong> que devuelve BotFather (formato <code>123456789:ABCdef...</code>).</li>
+    </ol>
+
+    <h3>2 · Crear el grupo</h3>
+    <ol>
+      <li>En Telegram: <em>Nuevo grupo</em>.</li>
+      <li>Asignar un nombre, p. ej. <strong>Residencial Alerts</strong>.</li>
+    </ol>
+
+    <h3>3 · Agregar el bot al grupo</h3>
+    <ol>
+      <li>Entrar al grupo recién creado.</li>
+      <li>Tocar el nombre del grupo → <em>Agregar miembros</em>.</li>
+      <li>Buscar <code>@TuBot</code> (el nombre que elegiste) y agregarlo.</li>
+    </ol>
+
+    <h3>4 · Generar un evento (imprescindible)</h3>
+    <p>Telegram no devuelve datos de un chat hasta que ocurre actividad. Envía al menos un mensaje en el grupo:</p>
+    <div class="flow">hola</div>
+    <p>Esto es suficiente para que <code>getUpdates</code> registre el chat.</p>
+
+    <h3>5 · Obtener el Chat ID con getUpdates</h3>
+    <p>Abre en el navegador (reemplaza <code>&lt;TU_TOKEN&gt;</code> con el token real):</p>
+    <div class="flow">https://api.telegram.org/bot&lt;TU_TOKEN&gt;/getUpdates</div>
+    <p>Busca en la respuesta JSON el bloque <code>"chat"</code>:</p>
+    <pre style="background:#161b22;color:#c9d1d9;border:1px solid var(--border);border-radius:8px;padding:16px;font-size:12.5px;overflow-x:auto;"><code>"chat": {
+  "id": -1001234567890,
+  "title": "Residencial Alerts"
+}</code></pre>
+    <p>El valor numérico (negativo si es grupo) es tu <strong>Chat ID</strong>. Guárdalo.</p>
+
+    <h3>6 · Verificar el envío manualmente</h3>
+    <p>Antes de configurar el ESP32 puedes probar que el bot y el grupo funcionan abriendo en el navegador:</p>
+    <div class="flow">https://api.telegram.org/bot&lt;TU_TOKEN&gt;/sendMessage?chat_id=&lt;CHAT_ID&gt;&amp;text=Hola</div>
+    <p>Deberías ver el mensaje <strong>Hola</strong> aparecer en el grupo.</p>
+
+    <h3>7 · Configurar en el panel web</h3>
+    <div class="mockup" style="max-width:480px;">
+      <div class="mock-bar"><span class="mock-dot" style="background:#ff5f57"></span><span class="mock-dot" style="background:#febc2e"></span><span class="mock-dot" style="background:#28c840"></span><span style="color:var(--muted);font-size:11px;margin-left:8px;">Panel web → Pestaña Red → Telegram</span></div>
+      <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
+        <label style="font-size:11px;color:var(--muted);">Bot Token</label>
+        <input type="text" value="123456789:ABCdef..." readonly style="width:100%;background:#0d1117;border:1px solid var(--border);border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:12px;font-family:monospace;">
+        <label style="font-size:11px;color:var(--muted);">Chat ID</label>
+        <input type="text" value="-1001234567890" readonly style="width:100%;background:#0d1117;border:1px solid var(--border);border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:12px;font-family:monospace;">
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button style="flex:1;background:var(--accent);border:none;border-radius:6px;color:#fff;padding:8px;font-size:12px;cursor:pointer;">Guardar</button>
+          <button style="flex:1;background:#21262d;border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:8px;font-size:12px;cursor:pointer;">Probar envío</button>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:12px;">Usa <strong>Probar envío</strong> para confirmar que el ESP32 puede alcanzar la API de Telegram desde la red local.</p>
+
+    <h3>Ejemplo de notificación real</h3>
+    <pre style="background:#161b22;color:#c9d1d9;border:1px solid var(--border);border-radius:8px;padding:16px;font-size:12px;overflow-x:auto;"><code>https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage
+  ?chat_id=&lt;CHAT_ID&gt;
+  &amp;parse_mode=HTML
+  &amp;text=🚪 &lt;b&gt;Acceso Autorizado&lt;/b&gt;
+       👤 Usuario: Arturo
+       ⏰ Hora: 12:30</code></pre>
+  </div>
+</div>
+
+</div><!-- /content -->
+</body>
+</html>
