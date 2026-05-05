@@ -58,7 +58,7 @@
 #define SESSION_TTL_MS     3600000UL        // 1 hora
 #define MAX_ADMINS         10
 #define RELAY_PIN          26               // pin del relevador (cambiar segun tu cableado)
-#define RELAY_PULSE_MS     2000             // cuanto tiempo permanece activo (ms)
+#define RELAY_PULSE_MS     1000             // valor por defecto (ms) — se sobreescribe con /relay.json
 #define PROVISION_DURATION_MS 15000         // 15 seg transmitiendo codigo nuevo
 // ==============================================
 
@@ -87,7 +87,9 @@ unsigned long lastBlinkMs = 0;
 bool          ledState = false;
 
 unsigned long lastSessionCleanMs = 0;
-unsigned long relayEndMs = 0;
+unsigned long relayEndMs    = 0;
+uint32_t      relayPulseMs  = RELAY_PULSE_MS;  // configurable desde UI
+bool          logUnknown    = true;              // registrar codigos desconocidos
 
 struct Session {
   char token[33];
@@ -144,6 +146,11 @@ void   saveTzConfig(const String &posix);
 void   applyTimezone();
 void   syncSystemFromRtc();
 void   syncRtcFromSystem();
+void   handleNtpSync();
+bool   loadRelayConfig();
+void   saveRelayConfig(uint32_t ms, bool logUnk);
+void   handleRelayConfigGet();
+void   handleRelayConfigSet();
 
 // ================= STORAGE =================
 // /users.json : [{"code":123456,"name":"Usuario"}]
@@ -397,6 +404,33 @@ void applyTimezone() {
   Serial.printf("[TZ] zona aplicada: %s\n", posix.c_str());
 }
 
+// ================= RELAY CONFIG =================
+bool loadRelayConfig() {
+  relayPulseMs = RELAY_PULSE_MS;
+  logUnknown   = true;
+  if (!LittleFS.exists("/relay.json")) return true;
+  File f = LittleFS.open("/relay.json", "r");
+  if (!f) return true;
+  JsonDocument doc;
+  if (deserializeJson(doc, f) == DeserializationError::Ok) {
+    uint32_t v = doc["pulseMs"] | RELAY_PULSE_MS;
+    if (v >= 100 && v <= 30000) relayPulseMs = v;
+    logUnknown = doc["logUnknown"] | true;
+  }
+  f.close();
+  return true;
+}
+
+void saveRelayConfig(uint32_t ms, bool logUnk) {
+  JsonDocument doc;
+  doc["pulseMs"]    = ms;
+  doc["logUnknown"] = logUnk;
+  File f = LittleFS.open("/relay.json", "w");
+  if (!f) return;
+  serializeJson(doc, f);
+  f.close();
+}
+
 // ================= AUTH =================
 String md5Hex(const String &input) {
   mbedtls_md5_context ctx;
@@ -565,11 +599,12 @@ void setupWiFi() {
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("[STA] OK  IP=%s\n", WiFi.localIP().toString().c_str());
-      configTime(0, 0, NTP_SERVER);
+      String tzPosix; loadTzConfig(tzPosix);
+      configTzTime(tzPosix.c_str(), NTP_SERVER);  // sincroniza NTP y aplica TZ correctamente
       struct tm tm;
       if (getLocalTime(&tm, 5000)) {
         timeOk = true;
-        Serial.println("[NTP] hora sincronizada");
+        Serial.printf("[NTP] hora sincronizada (TZ: %s)\n", tzPosix.c_str());
         syncRtcFromSystem();
       }
     } else {
@@ -700,6 +735,12 @@ button.blk{background:var(--warn);color:#1a1200}
 </div>
 
 <div id="tab-logs">
+  <div class="card" style="padding:10px 14px;margin-bottom:8px">
+    <div class="row" style="padding:4px 0;border-bottom:none">
+      <span style="font-size:13px;font-weight:600">Registrar codigos desconocidos</span>
+      <input type="checkbox" id="relayLogUnknown" style="width:auto;height:18px;width:18px;cursor:pointer" onchange="saveLogUnknown(this)">
+    </div>
+  </div>
   <h2>Ultimos accesos</h2>
   <div class="card" id="logs"></div>
   <div class="grid">
@@ -742,6 +783,14 @@ button.blk{background:var(--warn);color:#1a1200}
 </div>
 
 <div id="tab-net" style="display:none">
+  <h2>Relevador</h2>
+  <div class="card">
+    <div class="row" style="padding:6px 0"><span>Pulso actual</span><span id="relayPulseLabel" class="tag" style="font-family:monospace">-</span></div>
+    <label style="font-size:12px;color:var(--mut);display:block;margin-top:10px;margin-bottom:4px">Duracion del pulso (segundos)</label>
+    <input type="number" id="relayPulseSec" min="0.1" max="30" step="0.1" placeholder="1" style="margin-bottom:10px">
+    <button onclick="saveRelayPulse()">Guardar</button>
+    <div class="hint">Tiempo que el relevador permanece activado al recibir un codigo valido. Rango: 0.1&nbsp;&ndash;&nbsp;30 segundos.</div>
+  </div>
   <h2>AP del porton</h2>
   <div class="card">
     <div style="margin-bottom:8px">Actual: <span id="apInfo" class="tag">-</span></div>
@@ -794,15 +843,17 @@ button.blk{background:var(--warn);color:#1a1200}
     <button onclick="saveTz()">Guardar</button>
     <div class="hint">Se aplica de inmediato, sin reiniciar. Afecta la hora en los registros (requiere WiFi de casa para NTP).</div>
   </div>
-  <h2>Reloj RTC (DS3231)</h2>
+  <h2>Reloj / Hora del sistema</h2>
   <div class="card">
     <div class="row" style="padding:6px 0"><span>Modulo DS3231</span><span id="rtcStatus" class="tag">-</span></div>
     <div class="row" style="padding:6px 0"><span>Hora actual (local)</span><span id="rtcNow" class="tag" style="font-family:monospace">-</span></div>
+    <button style="margin-top:10px" onclick="syncNtp(this)">&#128257; Sincronizar NTP ahora</button>
+    <div class="hint" style="margin-bottom:0">Requiere WiFi de casa. Aplica la zona horaria configurada arriba.</div>
     <h2 style="margin:14px 0 6px">Establecer hora manual</h2>
-    <div class="hint" style="margin-bottom:8px">Ingresar en hora local segun la zona configurada arriba. Util cuando no hay internet.</div>
+    <div class="hint" style="margin-bottom:8px">Funciona sin internet y sin modulo DS3231. Ingresar en hora local segun la zona configurada arriba.</div>
     <input type="datetime-local" id="rtcDatetime" step="1" style="margin-bottom:10px">
     <button onclick="setRtcTime()">Establecer hora</button>
-    <div class="hint">Con WiFi de casa la hora se sincroniza automaticamente desde NTP al conectar.</div>
+    <div class="hint">Si hay DS3231 conectado, tambien actualiza el chip de reloj.</div>
   </div>
 </div>
 
@@ -830,9 +881,35 @@ function chk(r){if(r&&r.status===401){window.location='/login';return false;}ret
 function tab(id){
   document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===id));
   ['logs','users','net','admins'].forEach(t=>document.getElementById('tab-'+t).style.display=t===id?'':'none');
-  if(id==='logs')loadLogs();if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();loadTz();loadRtc();}if(id==='admins')loadAdmins();
+  if(id==='logs'){loadLogs();loadRelayPulse();}if(id==='users')loadUsers();if(id==='net'){loadStatus();loadTelegram();loadTz();loadRtc();loadRelayPulse();}if(id==='admins')loadAdmins();
 }
 document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();tab(a.dataset.tab);}));
+async function loadRelayPulse(){
+  const r=await fetch('/api/relay/config');if(!chk(r))return;const j=await r.json();
+  const ms=j.pulseMs||1000;
+  const el=document.getElementById('relayPulseLabel');
+  if(el)el.textContent=(ms/1000).toFixed(1)+' s';
+  const sec=document.getElementById('relayPulseSec');
+  if(sec)sec.value=(ms/1000).toFixed(1);
+  const cb=document.getElementById('relayLogUnknown');
+  if(cb)cb.checked=j.logUnknown!==false;
+}
+async function saveLogUnknown(cb){
+  const sec=parseFloat(document.getElementById('relayPulseSec')?.value||'1');
+  const ms=isNaN(sec)?relayPulseMs:(Math.round(sec*1000)||1000);
+  await fetch('/api/relay/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pulseMs:ms,logUnknown:cb.checked})});
+}
+async function saveRelayPulse(){
+  const sec=parseFloat(document.getElementById('relayPulseSec').value);
+  if(isNaN(sec)||sec<0.1||sec>30){alert('Ingresa un valor entre 0.1 y 30 segundos');return;}
+  const ms=Math.round(sec*1000);
+  const cb=document.getElementById('relayLogUnknown');
+  const logUnk=cb?cb.checked:true;
+  const r=await fetch('/api/relay/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pulseMs:ms,logUnknown:logUnk})});
+  const j=await r.json();
+  if(j.ok){const el=document.getElementById('relayPulseLabel');if(el)el.textContent=sec.toFixed(1)+' s';alert('Guardado.');}
+  else alert(j.error||'Error al guardar');
+}
 async function loadStatus(){
   const r=await fetch('/api/status');if(!chk(r))return;const j=await r.json();
   document.getElementById('status').textContent=j.time+' - '+(j.staIp||'sin WiFi casa')+' - AP: '+j.apIp;
@@ -947,6 +1024,14 @@ async function saveTelegram(){
   })});
   if(r.ok)alert('Guardado.');else alert('Error al guardar');
 }
+async function syncNtp(btn){
+  btn.disabled=true;const orig=btn.textContent;btn.textContent='Sincronizando...';
+  const r=await fetch('/api/ntp/sync',{method:'POST'});
+  const j=await r.json();
+  btn.disabled=false;btn.textContent=orig;
+  if(j.ok){alert('Hora sincronizada con NTP correctamente.');loadRtc();}
+  else alert('Error: '+(j.msg||'sin respuesta'));
+}
 async function loadTz(){
   const r=await fetch('/api/timezone');if(!chk(r))return;const j=await r.json();
   const sel=document.getElementById('tzPosix');
@@ -1010,7 +1095,7 @@ async function delAdmin(u){
   const j=await r.json();
   if(r.ok)loadAdmins();else alert(j.error||'Error');
 }
-loadStatus();loadLogs();setInterval(loadLogs,5000);
+loadStatus();loadLogs();loadRelayPulse();setInterval(loadLogs,5000);
 </script></body></html>
 )rawliteral";
 
@@ -1233,20 +1318,23 @@ void handleUsersImport() {
 void reinitRfReceiver() {
   mySwitch.disableReceive();
   mySwitch.disableTransmit();
-  pinMode(RF_RX_PIN, INPUT);  // CRITICO: disableTransmit() deja el pin como OUTPUT
+  pinMode(RF_RX_PIN, INPUT);   // CRITICO: disableTransmit() deja el pin como OUTPUT
   provisionTxReady = false;
-  // Init() envia SRES internamente — reset completo del chip desde cualquier estado
-  ELECHOUSE_cc1101.Init();
+  // Llevar CC1101 a IDLE antes de reconfigurar (SetTx puede haber alterado PKTCTRL0/IOCFG0)
+  ELECHOUSE_cc1101.SpiStrobe(0x36); // SIDLE
+  delay(5);
+  // Reconfigurar exactamente igual que en setup() pero sin Init()
+  // (Init() tarda demasiado y reinicia el ESP; los registros base persisten)
   ELECHOUSE_cc1101.setMHZ(433.92);
-  ELECHOUSE_cc1101.setModulation(2); // OOK/ASK
+  ELECHOUSE_cc1101.setModulation(2); // OOK/ASK — obligatorio para controles 433MHz
   ELECHOUSE_cc1101.setPA(10);
   ELECHOUSE_cc1101.SetRx();
-  delay(100);
+  delay(5);
   mySwitch.resetAvailable();
   lastCode        = 0;
   lastDetectionMs = 0;
   mySwitch.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
-  Serial.println("[RF] CC1101 reiniciado y en RX");
+  Serial.println("[RF] CC1101 en RX (OOK 433.92MHz)");
 }
 
 // Detiene cualquier transmision y reinicia el receptor RF
@@ -1262,9 +1350,6 @@ void handleRfReset() {
 
 void handleReboot() {
   if (!requireAuth()) return;
-  mySwitch.disableReceive();
-  mySwitch.disableTransmit();
-  pinMode(RF_RX_PIN, INPUT);
   server.send(200, "application/json", "{\"ok\":true}");
   delay(200);
   ESP.restart();
@@ -1417,6 +1502,52 @@ void handleRtcSet() {
   timeOk = true;
   Serial.printf("[RTC] hora manual: %04d-%02d-%02d %02d:%02d:%02d local\n", yr, mo, dy, hr, mn, sc);
   server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleRelayConfigGet() {
+  if (!requireAuth()) return;
+  JsonDocument doc;
+  doc["pulseMs"]    = relayPulseMs;
+  doc["logUnknown"] = logUnknown;
+  String s; serializeJson(doc, s);
+  server.send(200, "application/json", s);
+}
+
+void handleRelayConfigSet() {
+  if (!requireAuth()) return;
+  if (!server.hasArg("plain")) { server.send(400, "text/plain", "body requerido"); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  uint32_t ms = doc["pulseMs"] | 0;
+  if (ms < 100 || ms > 30000) {
+    server.send(400, "application/json", "{\"error\":\"pulseMs debe estar entre 100 y 30000\"}"); return;
+  }
+  bool logUnk = doc["logUnknown"] | true;
+  relayPulseMs = ms;
+  logUnknown   = logUnk;
+  saveRelayConfig(ms, logUnk);
+  Serial.printf("[RELAY] pulso: %u ms  logUnknown: %s\n", ms, logUnk ? "si" : "no");
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleNtpSync() {
+  if (!requireAuth()) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"ok\":false,\"msg\":\"sin WiFi de casa\"}");
+    return;
+  }
+  String posix; loadTzConfig(posix);
+  configTzTime(posix.c_str(), NTP_SERVER);
+  struct tm tm;
+  bool ok = getLocalTime(&tm, 5000);
+  if (ok) {
+    timeOk = true;
+    syncRtcFromSystem();
+    Serial.printf("[NTP] sincronizado manualmente (TZ: %s)\n", posix.c_str());
+  } else {
+    Serial.println("[NTP] sin respuesta del servidor");
+  }
+  server.send(ok ? 200 : 503, "application/json",
+              ok ? "{\"ok\":true}" : "{\"ok\":false,\"msg\":\"sin respuesta del servidor NTP\"}");
 }
 
 void handleUserRename() {
@@ -1595,6 +1726,9 @@ void setupWebServer() {
   server.on("/api/timezone",              HTTP_POST, handleTzSet);
   server.on("/api/rtc",                   HTTP_GET,  handleRtcGet);
   server.on("/api/rtc/set",               HTTP_POST, handleRtcSet);
+  server.on("/api/ntp/sync",              HTTP_POST, handleNtpSync);
+  server.on("/api/relay/config",          HTTP_GET,  handleRelayConfigGet);
+  server.on("/api/relay/config",          HTTP_POST, handleRelayConfigSet);
   server.begin();
   Serial.println("[WEB] servidor iniciado");
 }
@@ -1613,6 +1747,7 @@ void setup() {
 
   bootstrapFirstAdmin();
   applyTimezone();
+  loadRelayConfig();
 
   Wire.begin();
   if (rtc.begin()) {
@@ -1757,7 +1892,7 @@ void loop() {
 
     if (known && !blocked) {
       digitalWrite(RELAY_PIN, HIGH);
-      relayEndMs = millis() + RELAY_PULSE_MS;
+      relayEndMs = millis() + relayPulseMs;
       Serial.printf("[RELAY] activado para %s\n", name.c_str());
       sendTelegram("notifyAccess", "Acceso: " + name + " - " + currentTimestamp());
     } else if (blocked) {
@@ -1767,7 +1902,7 @@ void loop() {
       sendTelegram("notifyUnknown", "Desconocido: codigo " + String(code) + " - " + currentTimestamp());
     }
 
-    addLog(name, code, blocked && known, pulse);
+    if (known || logUnknown) addLog(name, code, blocked && known, pulse);
     Serial.printf("[LOG] %s (codigo %lu, pulse=%uµs)%s\n", name.c_str(), code, pulse, blocked ? " [BLOQUEADO]" : "");
   }
 }
