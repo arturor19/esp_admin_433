@@ -10,6 +10,9 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 - Genera y transmite códigos únicos de 24 bits (RNG de hardware) para provisionar controles baratos de aprendizaje
 - Activa un relevador físico al recibir un código autorizado
 - Bloquea controles individualmente sin borrarlos
+- Bloqueo/desbloqueo **por grupo** según prefijo del nombre (ej. "Casa 13"), con confirmación
+- **Apertura remota** desde el panel (botón "Abrir ahora")
+- **Diagnóstico RF en 2 fases**: detecta si llega señal y si el control es de código fijo (clonable) o rodante; muestra el nombre si ya está registrado
 - Registro automático de cada acceso (fecha, hora, nombre)
 - Opción de no registrar códigos desconocidos (configurable desde el panel)
 - Panel web con autenticación de usuarios admin
@@ -70,7 +73,7 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 
 > El DS3231 opera a 3.3V. Conectar VCC al pin 3.3V del ESP32 (no al 5V).
 
-> Los pines se pueden cambiar modificando las constantes al inicio de `porton_433.ino`.
+> Los pines se pueden cambiar modificando las constantes al inicio de `src/main.cpp`.
 
 ### Diagrama de conexiones
 
@@ -80,26 +83,24 @@ Sistema de control de acceso para portones y puertas mediante controles remotos 
 
 ---
 
-## Librerías necesarias (Arduino IDE)
+## Librerías necesarias (PlatformIO)
 
-Instalar desde el gestor de librerías (**Sketch → Incluir librería → Gestionar librerías**):
+El proyecto usa **PlatformIO**. Las librerías se instalan solas al compilar — están fijadas por versión en `platformio.ini`:
 
 | Librería | Autor |
 |---|---|
-| **ELECHOUSE_CC1101_SRC_DRV** | LSatan (SmartRC-CC1101-Driver) |
-| **RCSwitch** | sui77 |
+| **SmartRC-CC1101-Driver-Lib** | LSatan |
+| **rc-switch** | sui77 |
 | **ArduinoJson** | Benoit Blanchon |
 | **RTClib** | Adafruit (opcional, solo si usás el módulo DS3231) |
 
-Las demás (`WiFi`, `WebServer`, `LittleFS`, `WiFiClientSecure`, `time.h`, `mbedtls/md5.h`) vienen incluidas en el core de ESP32.
-
-> **Nota:** Si el IDE muestra errores en `mbedtls/md5.h` o `WiFiClientSecure.h`, son falsos positivos del IntelliSense. El código compila correctamente con el toolchain del ESP32.
+Las demás (`WiFi`, `WebServer`, `LittleFS`, `WiFiClientSecure`, `time.h`, `MD5Builder`) vienen incluidas en el core de ESP32 (`espressif32`), que PlatformIO también descarga automáticamente.
 
 ---
 
 ## Configuración en el código
 
-Al inicio de `porton_433.ino` están las constantes que podés modificar:
+Al inicio de `src/main.cpp` están las constantes que podés modificar:
 
 ```cpp
 #define CC1101_CS_PIN         5    // SPI CSN / SS del CC1101
@@ -118,12 +119,27 @@ El pulso del relevador también se puede cambiar en cualquier momento desde la p
 
 ## Primer uso
 
-### 1. Cargar el sketch
+### 1. Compilar y subir el firmware
 
-1. Abrí `porton_433.ino` en Arduino IDE.
-2. Seleccioná tu placa: **Herramientas → Placa → ESP32 Dev Module**.
-3. Seleccioná el puerto COM correcto.
-4. Cargá el sketch con el botón **Subir**.
+Con el ESP32 conectado por USB, desde la raíz del proyecto:
+
+```bash
+./flash.sh            # compila, sube y abre el monitor serie
+./flash.sh build      # solo compila
+./flash.sh monitor    # solo monitor serie (115200)
+./flash.sh clean      # borra la carpeta de build
+./flash.sh -p /dev/ttyUSB0    # forzar un puerto especifico
+```
+
+O directamente con PlatformIO:
+
+```bash
+pio run                       # compilar
+pio run -t upload             # compilar y subir
+pio device monitor -b 115200  # monitor serie
+```
+
+PlatformIO descarga solo el core de ESP32 y las librerías la primera vez. No hace falta Arduino IDE.
 
 ### 2. Conectarse al portón
 
@@ -137,6 +153,18 @@ Conectate a esa red desde tu celular o PC y abrí el navegador en:
 ```
 http://192.168.4.1
 ```
+
+**Acceso por nombre (sin memorizar la IP):** el dispositivo se anuncia por mDNS como
+`porton-XXXX.local` (donde `XXXX` son los últimos 2 caracteres de su MAC; lo ves en la
+pestaña **Red** y en el log de arranque). Funciona tanto en `Porton_Config` como en tu
+WiFi de casa:
+
+```
+http://porton-XXXX.local
+```
+
+> El nombre `.local` lo resuelven de forma nativa iPhone/Mac y Android reciente; en
+> Windows requiere Bonjour. Si tu equipo no lo resuelve, usá siempre la IP como respaldo.
 
 ### 3. Login inicial
 
@@ -188,6 +216,22 @@ Lista todos los controles remotos registrados y permite gestionarlos.
 - **Habilitar** restaura el acceso.
 - **Borrar** lo elimina definitivamente del sistema.
 
+**Apertura remota:**
+- Botón **🔓 Abrir ahora** activa el relevador desde el panel, por el mismo tiempo configurado para los controles. Registra un aviso de Telegram si está activado.
+
+**Bloqueo por grupo:**
+- Escribí un prefijo de nombre (ej. `Casa 13`) y presioná **Bloquear grupo** o **Desbloquear grupo**.
+- Afecta a todos los controles cuyo nombre empieza con ese texto **como palabra completa**: `Casa 13` incluye `Casa 13 # 1` y `Casa 13 # 2`, pero **no** `Casa 130`.
+- Antes de aplicar, muestra la lista de controles afectados y pide confirmación.
+
+**Diagnóstico RF (2 fases):**
+- Botón **🔍 Diagnóstico RF**. Mantené apretado el control apuntando al receptor durante los 8 seg.
+- **Fase 1** mide si llega señal; **Fase 2** intenta decodificarla. El panel muestra en pantalla uno de estos resultados:
+  - ✅ **Código fijo** (clonable/aprendible) — muestra código y bits; si ya está registrado, indica el nombre y si está bloqueado.
+  - 🔄 **Código rodante** o protocolo no soportado (llega señal pero no se decodifica).
+  - ⚠️ Señal muy débil, o ❌ sin señal (revisar antena/frecuencia).
+- No interfiere con la recepción normal: al terminar, el receptor de apertura queda restaurado.
+
 ### Pestaña — Red
 
 **Relevador:**
@@ -219,6 +263,10 @@ Configuración para recibir mensajes en un grupo o chat de Telegram.
 | Código desconocido | Notifica códigos RF no registrados |
 
 > Requiere WiFi de casa activo.
+
+También podés **exportar** e **importar** toda la configuración de Telegram como archivo `telegram-config.json` (botones bajo Guardar). Útil para respaldar o copiar la config a otro equipo.
+
+> El archivo exportado contiene el **bot token en texto plano**. Guardalo en un lugar seguro.
 
 **Zona horaria:**
 Selector de zona horaria. Se aplica al instante sin reiniciar. Opciones disponibles: México (tres zonas), países de América Latina, España y UTC.
@@ -264,15 +312,23 @@ El tiempo de pulso se ajusta desde **Red → Relevador** (0.1 – 30 segundos) s
 
 ## Factory Reset
 
-Si olvidás el password del AP y no podés conectarte al panel:
+Hay dos formas de restablecer la red a valores de fábrica:
+
+**a) Botón físico** (recuperación si no podés entrar al panel):
 
 1. Mantené apretado el botón **BOOT** de la placa por **5 segundos**.
 2. El LED azul parpadea con frecuencia creciente mientras contás.
-3. Al completar los 5 segundos el ESP32 reinicia con los valores por defecto:
+3. Al completar los 5 segundos el ESP32 reinicia con los valores por defecto.
+
+**b) Desde el panel web** (pestaña **Red** → botón **⚠️ Restablecer red de fábrica**):
+
+- Pide confirmación y luego muestra la pantalla de reinicio indicándote a qué red reconectarte.
+
+En ambos casos se vuelve a los valores por defecto:
    - **SSID:** `Porton_Config`
    - **Password:** `porton1234`
 
-> Los registros, controles aprendidos y usuarios admin **NO se borran** con el factory reset. Solo se resetea la configuración del AP.
+> Se borran la configuración del AP y el WiFi de casa. Los registros, controles aprendidos y usuarios admin **NO se borran**.
 
 ---
 
